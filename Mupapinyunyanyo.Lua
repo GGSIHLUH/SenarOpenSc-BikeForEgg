@@ -592,6 +592,7 @@ local okBike, errBike = pcall(function()
 			Vector3.new(2279.83, 70.57, -328.63),
 			Vector3.new(2812.01, 70.57, -398.60),
 			Vector3.new(3391.65, 70.57, -324.71),
+            Vector3.new(4028.29, 70.88, -399.21),
 		},
 		TP_STEP = 16, TP_DELAY = 0.05,
 		WALK_TIMEOUT = 120,
