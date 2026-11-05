@@ -1,14 +1,32 @@
--- SENAR HUB | UI v2 + Bike for Egg
--- + System Key WAJIB dulu (Main / Finder / Config terkunci sebelum key valid)
--- + Tab Finder (egg acak + income acak per rentang)
--- + Resize, 23 Tema, Mode Kaitun, Super Modern Mode
+-- SENAR HUB | UI v3 + Bike for Egg + Farming Rarity
+-- Layout: Title bar | Sidebar (Menu) | Panel Fitur | Panel Pengaturan (beda tiap tab)
+-- + Default / Recommended per tab   + Background gambar (samar)
+-- + 23 Tema (tab Tema)              + Super Modern Mode (tab Tema)
+-- + Mode Kaitun (ikon di title bar) + Resize (pegangan kanan bawah)
+-- + System Key (Check / Get 5 menit / Premium)
+-- + SEMUA FITUR TERKUNCI sampai key valid (tab System Key -> CHECK KEY)
 --
--- Hook (taruh kodemu di paling bawah kalau perlu):
+-- Hook untuk project (taruh kodemu di paling bawah):
 --   local UI = getgenv().SenarUI
---   UI.onToggle / onJoin / onCopy / onClear / onKeySubmit / onKeyResult
---   UI.onKaitun / onTheme / onFind(entry)
---   UI.eggs  -> tabel daftar egg Finder: { "Nama", minM, maxM }
---   UI.addLog(name, income, info)  UI.clearLogs()  UI.setStatus("...")  UI.setTheme("Dracula")
+--   UI.onToggle    = function(name, state, tab) end
+--   UI.onSlider    = function(name, value, tab) end
+--   UI.onDropdown  = function(name, option, tab) end
+--   UI.onInput     = function(tab, text) end
+--   UI.onPreset    = function(tab, mode) end        -- "default" / "recommended"
+--   UI.onJoin      = function(entry) end
+--   UI.onCopy      = function(entry) end
+--   UI.onClear     = function(tab) end
+--   UI.onKeySubmit = function(text) end
+--   UI.onKeyResult = function(valid, tier) end      -- tier: "Premium" / "Free"
+--   UI.onKaitun    = function(state) end
+--   UI.onTheme     = function(name) end
+--   UI.addLog(name, income, info)   UI.clearLogs()
+--   UI.addHistory(text)             UI.clearHistory()
+--   UI.setStatus("Connected")       UI.setKeyStatus("Valid")
+--   UI.setTheme("Dracula")          UI.destroy()
+--   UI.getSetting(tab, name)        UI.setSetting(tab, name, value)
+--   UI.getFeature(tab, name)        --> { enabled = bool, value = option/angka }
+--   UI.isUnlocked()                 --> true kalau key sudah valid
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -22,11 +40,20 @@ if not LocalPlayer then return end
 -- ================= CONFIG =================
 local ICON_ASSET_ID   = 94315198453864
 local KAITUN_ASSET_ID = 4548250991
+local BG_ASSET_ID     = 15893685449      -- gambar background (opasitas diatur di tab Tema)
 local DISCORD_LINK    = "https://discord.gg/6VeEjrRYy"
 local DISCORD_CODE    = "6VeEjrRYy"
 local PREMIUM_KEYS    = { ["SENAR-PREMIUM-KEY"] = true }
 local KEY_WAIT        = 300 -- detik (5 menit)
 local KEY_FILE        = "SenarHub_Key.txt"
+
+local ZONE_COUNT   = 10
+local RARITY_LIST  = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Eternal", "Divine", "Random" }
+
+local W, H = 640, 350            -- ukuran window
+local PH = 300                   -- tinggi area konten
+local CW, SW = 318, 166          -- lebar panel tengah / panel pengaturan
+local PAGE_W = CW + 8 + SW
 
 -- ================= CLEANUP =================
 local env = (getgenv and getgenv()) or _G
@@ -34,22 +61,46 @@ if env.__SenarCleanup then pcall(env.__SenarCleanup) end
 
 -- ================= API PUBLIK =================
 local UI = {
-	onToggle = function(name, state) end,
+	onToggle = function(name, state, tab) end,
+	onSlider = function(name, value, tab) end,
+	onDropdown = function(name, option, tab) end,
+	onInput = function(tab, text) end,
+	onPreset = function(tab, mode) end,
 	onJoin = function(entry) end,
 	onCopy = function(entry) end,
-	onClear = function() end,
+	onClear = function(tab) end,
 	onKeySubmit = function(text) end,
 	onKeyResult = function(valid, tier) end,
 	onKaitun = function(state) end,
 	onTheme = function(name) end,
-	onFind = function(entry) end,
 	addLog = function() end,
 	clearLogs = function() end,
+	addHistory = function() end,
+	clearHistory = function() end,
 	setStatus = function() end,
+	setKeyStatus = function() end,
 	setTheme = function() end,
+	getSetting = function() end,
+	setSetting = function() end,
+	getFeature = function() end,
+	isUnlocked = function() return false end,
 	destroy = function() end,
 }
 env.SenarUI = UI
+
+local function fire(name, ...)
+	local fn = UI[name]
+	if type(fn) == "function" then
+		local ok, err = pcall(fn, ...)
+		if not ok then warn("[Senar Hub] " .. name .. ": " .. tostring(err)) end
+	end
+end
+
+-- status kunci fitur (true setelah key valid)
+local unlocked = false
+UI.isUnlocked = function() return unlocked end
+local actions = {}   -- aksi tombol di tab Fitur (diisi oleh blok Bike for Egg)
+local badges = {}    -- label "TERKUNCI / KEY AKTIF"
 
 -- ================= TEMA =================
 local WHITE = Color3.fromRGB(255, 255, 255)
@@ -151,6 +202,16 @@ local function corner(o, r)
 	return make("UICorner", { CornerRadius = UDim.new(0, r) }, o)
 end
 
+local function label(parent, props)
+	local d = {
+		BackgroundTransparency = 1, TextColor3 = th("TEXT"),
+		Font = Enum.Font.GothamBold, TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}
+	for k, v in pairs(props) do d[k] = v end
+	return make("TextLabel", d, parent)
+end
+
 local function randName(n)
 	local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	local t = table.create(n)
@@ -171,6 +232,12 @@ local tweens = {}
 local sweepGradients = {}
 local spinGrads = {}
 local modern = false
+
+-- kecepatan tween (diatur dari setting "Kecepatan Tween")
+local tweenSpeed = 15
+local function dur(base)
+	return math.clamp(base * 15 / tweenSpeed, 0.03, 0.8)
+end
 
 -- animasi tombol: hover / tekan (lebih besar saat Super Modern)
 local function fx(hit, target, amp)
@@ -262,6 +329,20 @@ onTheme(function()
 	end
 end)
 
+-- panel yang transparansinya bisa diatur
+local panels = {}
+local function regPanel(frame, base)
+	table.insert(panels, { f = frame, base = base })
+	frame.BackgroundTransparency = base
+end
+local function applyAlpha(a)
+	for _, p in ipairs(panels) do
+		if p.f.Parent then
+			p.f.BackgroundTransparency = math.clamp(p.base + a, 0, 1)
+		end
+	end
+end
+
 -- ================= GUI =================
 local gui = make("ScreenGui", {
 	Name = randName(14), ResetOnSpawn = false, DisplayOrder = 999,
@@ -302,8 +383,6 @@ do
 	table.insert(tweens, tw)
 end
 
-local W, H = 470, 300
-
 -- overlay Kaitun (di belakang window)
 local kOverlay = make("Frame", {
 	Name = "K", Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK,
@@ -334,7 +413,8 @@ local holder = make("Frame", {
 }, gui)
 local fitScale = make("UIScale", { Scale = 1 }, holder)
 
-local fitMul, userMul = 1, 1
+-- skala = fit layar * resize grip * setting "Skala UI" * maximize
+local fitMul, gripMul, setMul, zoomMul = 1, 1, 1, 1
 local function maxTotal()
 	local cam = workspace.CurrentCamera
 	if not cam then return 1.5 end
@@ -342,7 +422,7 @@ local function maxTotal()
 	return math.min(vp.X / (W + 10), vp.Y / (H + 10), 1.8)
 end
 local function applyScale()
-	fitScale.Scale = math.clamp(fitMul * userMul, 0.4, math.max(0.4, maxTotal()))
+	fitScale.Scale = math.clamp(fitMul * gripMul * setMul * zoomMul, 0.4, math.max(0.4, maxTotal()))
 end
 local function updateFit()
 	local cam = workspace.CurrentCamera
@@ -413,6 +493,14 @@ corner(main, 12)
 local popScale = make("UIScale", { Scale = 1 }, main)
 local mainStroke = spinStroke(main, 1.5)
 
+-- ---------- Gambar background (samar) ----------
+local bgImg = make("ImageLabel", {
+	Name = "Background", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+	Image = "rbxassetid://" .. tostring(BG_ASSET_ID),
+	ImageTransparency = 0.82, ScaleType = Enum.ScaleType.Crop, BorderSizePixel = 0,
+}, main)
+corner(bgImg, 12)
+
 -- ---------- Balok atas & bawah ----------
 local blocks = {}
 do
@@ -429,7 +517,7 @@ do
 			BackgroundTransparency = 0.35, BorderSizePixel = 0,
 		}, main)
 		local bot = make("Frame", {
-			AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromOffset(x, H),
+			AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, x, 1, 0),
 			Size = UDim2.fromOffset(BW, hBot),
 			BackgroundTransparency = 0.35, BorderSizePixel = 0,
 		}, main)
@@ -463,8 +551,8 @@ end
 
 -- ---------- Toast ----------
 local toastLbl = make("TextLabel", {
-	AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(W / 2 + 66, H + 30),
-	Size = UDim2.fromOffset(250, 24), BackgroundColor3 = th("PANEL"), BorderSizePixel = 0,
+	AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(W / 2, H + 30),
+	Size = UDim2.fromOffset(260, 24), BackgroundColor3 = th("PANEL"), BorderSizePixel = 0,
 	Text = "", TextColor3 = th("TEXT"), Font = Enum.Font.GothamBold, TextSize = 11,
 	Visible = false, ZIndex = 70,
 }, main)
@@ -475,34 +563,20 @@ local function toast(text)
 	toastId += 1
 	local id = toastId
 	toastLbl.Text = text
-	toastLbl.Position = UDim2.fromOffset(W / 2 + 66, H + 30)
+	toastLbl.Position = UDim2.fromOffset(W / 2, H + 30)
 	toastLbl.Visible = true
 	tween(toastLbl, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Position = UDim2.fromOffset(W / 2 + 66, H - 8) })
+		{ Position = UDim2.fromOffset(W / 2, H - 8) })
 	task.delay(2.4, function()
 		if id ~= toastId or not toastLbl.Parent then return end
-		tween(toastLbl, TweenInfo.new(0.25, Enum.EasingStyle.Quad), { Position = UDim2.fromOffset(W / 2 + 66, H + 30) })
+		tween(toastLbl, TweenInfo.new(0.25, Enum.EasingStyle.Quad), { Position = UDim2.fromOffset(W / 2, H + 30) })
 		task.delay(0.28, function()
 			if id == toastId and toastLbl.Parent then toastLbl.Visible = false end
 		end)
 	end)
 end
 
--- ---------- Gate System Key ----------
-local Gate = { unlocked = false, tier = nil, subs = {} }
-local function onUnlock(fn)
-	Gate.subs[#Gate.subs + 1] = fn
-	pcall(fn, Gate.unlocked, Gate.tier)
-end
-local function setUnlocked(on, tier)
-	local changed = (Gate.unlocked ~= on)
-	Gate.unlocked, Gate.tier = on, tier
-	if changed then
-		for _, fn in ipairs(Gate.subs) do pcall(fn, on, tier) end
-	end
-end
-
--- ---------- Super Modern toggle ----------
+-- ---------- Super Modern ----------
 local function setModern(on)
 	modern = on
 	thr.Visible = on
@@ -517,77 +591,46 @@ local function setModern(on)
 	toast(on and "Super Modern Mode ON" or "Super Modern Mode OFF")
 end
 
--- ---------- Sidebar ----------
+-- ================= SIDEBAR =================
+local tabNames = { "Fitur", "Logs", "History", "Tema", "System Key" }
+
 local side = make("Frame", {
-	Position = UDim2.fromOffset(8, 24), Size = UDim2.fromOffset(124, 252),
-	BackgroundColor3 = th("SIDE"), BackgroundTransparency = 0.12, BorderSizePixel = 0,
+	Position = UDim2.fromOffset(8, 30), Size = UDim2.fromOffset(124, PH),
+	BackgroundColor3 = th("SIDE"), BorderSizePixel = 0,
 }, main)
+regPanel(side, 0.25)
 corner(side, 10)
 glowStroke(side, 1)
 
-local titleRow = make("Frame", {
-	Position = UDim2.fromOffset(10, 8), Size = UDim2.fromOffset(108, 24),
-	BackgroundTransparency = 1,
-}, side)
-make("UIListLayout", {
-	FillDirection = Enum.FillDirection.Horizontal,
-	Padding = UDim.new(0, 4), VerticalAlignment = Enum.VerticalAlignment.Center,
-}, titleRow)
-
-local senar = make("TextLabel", {
-	Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X,
-	BackgroundTransparency = 1, Text = "Senar", TextColor3 = WHITE,
-	Font = Enum.Font.GothamBlack, TextSize = 18, LayoutOrder = 1,
-}, titleRow)
-local senarGrad = make("UIGradient", {}, senar)
-onTheme(function()
-	senarGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, T.ACCENT),
-		ColorSequenceKeypoint.new(0.40, T.ACCENT),
-		ColorSequenceKeypoint.new(0.44, T.ACCENT2),
-		ColorSequenceKeypoint.new(1, T.ACCENT2),
-	})
-end)
-
-local hub = make("TextLabel", {
-	Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X,
-	BackgroundTransparency = 1, Text = "Hub", TextColor3 = WHITE,
-	Font = Enum.Font.GothamBlack, TextSize = 18, LayoutOrder = 2,
-}, titleRow)
-local hubGrad = make("UIGradient", {}, hub)
-
-local function rainbowSeq(t)
-	local kps = {}
-	for i = 0, 6 do
-		kps[#kps + 1] = ColorSequenceKeypoint.new(i / 6, Color3.fromHSV((t * 0.25 + i / 6) % 1, 0.85, 1))
-	end
-	return ColorSequence.new(kps)
-end
-hubGrad.Color = rainbowSeq(0)
+label(side, {
+	Position = UDim2.fromOffset(14, 9), Size = UDim2.fromOffset(60, 14),
+	Text = "MENU", TextColor3 = th("GRAY"), TextSize = 10,
+})
 
 local dot = make("Frame", {
-	Position = UDim2.fromOffset(12, 40), Size = UDim2.fromOffset(6, 6),
+	AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 14, 1, -34), Size = UDim2.fromOffset(6, 6),
 	BackgroundColor3 = th("ACCENT"), BorderSizePixel = 0,
 }, side)
 corner(dot, 3)
-local statusLbl = make("TextLabel", {
-	Position = UDim2.fromOffset(24, 34), Size = UDim2.new(1, -30, 0, 18),
-	BackgroundTransparency = 1, Text = "Terkunci: butuh key", TextColor3 = th("GRAY"),
-	Font = Enum.Font.Gotham, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left,
+local statusLbl = label(side, {
+	AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 26, 1, -28), Size = UDim2.new(1, -32, 0, 18),
+	Text = "Terkunci", TextColor3 = th("GRAY"), Font = Enum.Font.Gotham,
 	TextTruncate = Enum.TextTruncate.AtEnd,
-}, side)
-UI.setStatus = function(t)
-	statusLbl.Text = tostring(t)
-end
+})
+UI.setStatus = function(t) statusLbl.Text = tostring(t) end
 
--- ---------- Konten & halaman ----------
+label(side, {
+	AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 14, 1, -10), Size = UDim2.new(1, -20, 0, 14),
+	Text = "Senar Hub v3", TextColor3 = th("STROKE"), Font = Enum.Font.Gotham, TextSize = 9,
+})
+
+-- ================= KONTEN & HALAMAN =================
 local content = make("Frame", {
-	Position = UDim2.fromOffset(140, 24), Size = UDim2.fromOffset(322, 252),
+	Position = UDim2.fromOffset(140, 30), Size = UDim2.fromOffset(PAGE_W, PH),
 	BackgroundTransparency = 1,
 }, main)
 
 local pages, tabBtns = {}, {}
-local tabNames = { "Main", "Finder", "Config", "Settings", "System Key" }
 local currentTab
 
 for _, name in ipairs(tabNames) do
@@ -603,6 +646,7 @@ local function refreshTabs()
 		t.btn.BackgroundTransparency = on and 0.15 or 1
 		t.btn.TextColor3 = on and T.TEXT or T.GRAY
 		t.stroke.Enabled = on
+		t.accent.Visible = on
 	end
 end
 
@@ -627,69 +671,32 @@ end
 for i, name in ipairs(tabNames) do
 	local b = make("TextButton", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromOffset(62, 70 + (i - 1) * 30), Size = UDim2.fromOffset(108, 26),
+		Position = UDim2.fromOffset(62, 45 + (i - 1) * 36), Size = UDim2.fromOffset(108, 30),
 		BackgroundColor3 = th("HOVER"), BackgroundTransparency = 1, BorderSizePixel = 0,
 		Text = name, TextColor3 = th("GRAY"), Font = Enum.Font.GothamBold, TextSize = 12,
-		AutoButtonColor = false,
+		TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false,
 	}, side)
 	corner(b, 8)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 16) }, b)
 	local st = glowStroke(b, 1)
 	st.Enabled = false
-	tabBtns[name] = { btn = b, stroke = st }
+	local accent = make("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, -10, 0.5, 0), Size = UDim2.fromOffset(3, 16),
+		BackgroundColor3 = th("ACCENT"), BorderSizePixel = 0, Visible = false,
+	}, b)
+	corner(accent, 2)
+	tabBtns[name] = { btn = b, stroke = st, accent = accent }
 	fx(b, b, 0.05)
 	b.Activated:Connect(function() selectTab(name) end)
 end
 onTheme(refreshTabs)
 
-local hideBtn = make("TextButton", {
-	AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 8, 1, -8), Size = UDim2.fromOffset(108, 30),
-	BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, Text = "Hide", TextColor3 = th("TEXT"),
-	Font = Enum.Font.GothamBold, TextSize = 12, AutoButtonColor = false,
-}, side)
-corner(hideBtn, 8)
-glowStroke(hideBtn, 1)
-fx(hideBtn, hideBtn, 0.05)
-
--- ---------- Kunci halaman sebelum key valid ----------
-local function lockPage(name)
-	local ov = make("Frame", {
-		Size = UDim2.fromScale(1, 1), BackgroundColor3 = th("BG"), BackgroundTransparency = 0.05,
-		BorderSizePixel = 0, Active = true, ZIndex = 30,
-	}, pages[name])
-	corner(ov, 8)
-	glowStroke(ov, 1)
-	make("TextLabel", {
-		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.38),
-		Size = UDim2.fromOffset(260, 26), BackgroundTransparency = 1, Text = "TERKUNCI",
-		TextColor3 = th("ACCENT"), Font = Enum.Font.GothamBlack, TextSize = 20, ZIndex = 31,
-	}, ov)
-	make("TextLabel", {
-		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.50),
-		Size = UDim2.fromOffset(280, 32), BackgroundTransparency = 1, TextWrapped = true,
-		Text = "Verifikasi System Key dulu untuk memakai fitur ini",
-		TextColor3 = th("GRAY"), Font = Enum.Font.Gotham, TextSize = 11, ZIndex = 31,
-	}, ov)
-	local go = make("TextButton", {
-		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.66),
-		Size = UDim2.fromOffset(150, 30), BackgroundColor3 = th("ACCENT"), BorderSizePixel = 0,
-		Text = "BUKA SYSTEM KEY", TextColor3 = th("ONACC"), Font = Enum.Font.GothamBold,
-		TextSize = 11, AutoButtonColor = false, ZIndex = 32,
-	}, ov)
-	corner(go, 8)
-	fx(go, go, 0.05)
-	go.Activated:Connect(function() selectTab("System Key") end)
-	onUnlock(function(on) ov.Visible = not on end)
-end
-lockPage("Main")
-lockPage("Finder")
-lockPage("Config")
-
--- ---------- Kaitun ----------
+-- ================= KAITUN =================
 local activeFeatures = {}
 local kStart = os.clock()
 
 local kBtn = make("TextButton", {
-	AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(W - 8, 2), Size = UDim2.fromOffset(22, 22),
+	AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -96, 0, 3), Size = UDim2.fromOffset(22, 22),
 	BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, Text = "", AutoButtonColor = false, ZIndex = 55,
 }, main)
 corner(kBtn, 6)
@@ -700,7 +707,7 @@ local kImg = make("ImageLabel", {
 	Image = "rbxassetid://" .. tostring(KAITUN_ASSET_ID), ZIndex = 56,
 }, kBtn)
 local kLbl = make("TextLabel", {
-	AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(W - 36, 5), Size = UDim2.fromOffset(80, 16),
+	AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -122, 0, 6), Size = UDim2.fromOffset(80, 16),
 	BackgroundTransparency = 1, Text = "KAITUN ON", TextColor3 = th("ACCENT"),
 	Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Right,
 	Visible = false, ZIndex = 55,
@@ -710,8 +717,8 @@ fx(kBtn, kBtn, 0.12)
 local function kaitunUnlocked() return next(activeFeatures) ~= nil end
 
 local function paintKaitun()
-	local unlocked = kaitunUnlocked()
-	kImg.ImageTransparency = (unlocked or kaitun) and 0 or 0.6
+	local ul = kaitunUnlocked()
+	kImg.ImageTransparency = (ul or kaitun) and 0 or 0.6
 	kBtn.BackgroundColor3 = kaitun and T.ACCENT or T.PANEL
 	kLbl.Visible = kaitun
 end
@@ -738,8 +745,7 @@ local function setKaitun(state)
 		restoreRender()
 	end
 	paintKaitun()
-	local okc, err = pcall(UI.onKaitun, state)
-	if not okc then warn("[Senar Hub] onKaitun: " .. tostring(err)) end
+	fire("onKaitun", state)
 	toast(state and "Kaitun Mode ON" or "Kaitun Mode OFF")
 end
 
@@ -752,45 +758,30 @@ end
 
 kBtn.Activated:Connect(function() setKaitun(not kaitun) end)
 
--- ---------- Komponen: switch card ----------
-local function makeSwitchCard(parent, name, size, pos, order, isFeature, internal)
-	local card = make("Frame", {
-		Size = size, Position = pos or UDim2.new(), LayoutOrder = order or 0,
-		BackgroundColor3 = th("PANEL"), BorderSizePixel = 0,
+-- ================= KOMPONEN =================
+
+-- toggle switch (ikut tema). props.gated = terkunci sampai key valid
+local function makeToggle(parent, props, onChange)
+	local track = make("TextButton", {
+		AnchorPoint = props.AnchorPoint or Vector2.new(0, 0.5), Position = props.Position,
+		Size = UDim2.fromOffset(38, 20), BorderSizePixel = 0, Text = "", AutoButtonColor = false,
 	}, parent)
-	corner(card, 8)
-	glowStroke(card, 1)
-
-	make("TextLabel", {
-		Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -64, 1, 0),
-		BackgroundTransparency = 1, Text = name, TextColor3 = th("TEXT"),
-		Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
-	}, card)
-
-	local track = make("Frame", {
-		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
-		Size = UDim2.fromOffset(38, 20), BorderSizePixel = 0,
-	}, card)
 	corner(track, 10)
 	local knob = make("Frame", {
 		Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(14, 14), BorderSizePixel = 0,
 	}, track)
 	corner(knob, 7)
 
-	local overlay = make("TextButton", {
-		Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 5,
-	}, card)
-
-	local on = false
+	local state = false
 	local function paint(animate)
-		local pos2 = on and UDim2.fromOffset(21, 3) or UDim2.fromOffset(3, 3)
-		local kc = on and T.ONACC or T.TEXT
-		local tc = on and T.ACCENT or T.OFF
+		local pos2 = state and UDim2.fromOffset(21, 3) or UDim2.fromOffset(3, 3)
+		local kc = state and T.ONACC or T.TEXT
+		local tc = state and T.ACCENT or T.OFF
 		if animate then
-			local info = TweenInfo.new(modern and 0.3 or 0.18,
-				modern and Enum.EasingStyle.Back or Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-			tween(knob, info, { Position = pos2, BackgroundColor3 = kc })
-			tween(track, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { BackgroundColor3 = tc })
+			tween(knob, TweenInfo.new(dur(modern and 0.3 or 0.18),
+				modern and Enum.EasingStyle.Back or Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Position = pos2, BackgroundColor3 = kc })
+			tween(track, TweenInfo.new(dur(0.18), Enum.EasingStyle.Quad), { BackgroundColor3 = tc })
 		else
 			knob.Position = pos2
 			knob.BackgroundColor3 = kc
@@ -798,43 +789,152 @@ local function makeSwitchCard(parent, name, size, pos, order, isFeature, interna
 		end
 	end
 	onTheme(function() paint(false) end)
-	fx(overlay, card, 0.025)
 
-	overlay.Activated:Connect(function()
-		on = not on
-		paint(true)
-		if isFeature then
-			activeFeatures[name] = on or nil
-			refreshKaitun()
+	local obj = {}
+	function obj.get() return state end
+	function obj.set(s, silent, instant)
+		s = not not s
+		if s == state then return end
+		state = s
+		paint(not instant)
+		if not silent and onChange then onChange(s) end
+	end
+	track.Activated:Connect(function()
+		if props.gated and not unlocked and not state then
+			toast("Terkunci! Verifikasi key di tab System Key")
+			return
 		end
-		if internal then pcall(internal, on) end
-		local okc, err = pcall(UI.onToggle, name, on)
-		if not okc then warn("[Senar Hub] onToggle: " .. tostring(err)) end
+		obj.set(not state)
 	end)
-	return card
+	return obj
 end
 
--- ---------- Komponen: list ----------
-local function makeList(parent, size, pos)
+local function stepBtn(parent, text, anchor, pos)
+	local b = make("TextButton", {
+		AnchorPoint = anchor, Position = pos, Size = UDim2.fromOffset(18, 18),
+		BackgroundColor3 = th("HOVER"), BorderSizePixel = 0, Text = text, TextColor3 = th("TEXT"),
+		Font = Enum.Font.GothamBold, TextSize = 12, AutoButtonColor = false,
+	}, parent)
+	corner(b, 5)
+	return b
+end
+
+-- slider (opsional tombol - / +)
+local function makeSlider(parent, o)
+	local holderS = make("Frame", {
+		AnchorPoint = o.AnchorPoint or Vector2.new(0, 0), Position = o.Position,
+		Size = o.Size, BackgroundTransparency = 1,
+	}, parent)
+
+	local left, right = 0, 0
+	local minus, plus
+	if o.buttons then
+		minus = stepBtn(holderS, "-", Vector2.new(0, 0.5), UDim2.new(0, 0, 0.5, 0))
+		plus = stepBtn(holderS, "+", Vector2.new(1, 0.5), UDim2.new(1, 0, 0.5, 0))
+		left, right = 24, 24
+	end
+
+	local hit = make("TextButton", {
+		Position = UDim2.fromOffset(left, 0), Size = UDim2.new(1, -(left + right), 1, 0),
+		BackgroundTransparency = 1, Text = "",
+	}, holderS)
+	local track = make("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
+		Size = UDim2.new(1, 0, 0, 4), BackgroundColor3 = th("OFF"), BorderSizePixel = 0,
+	}, hit)
+	corner(track, 2)
+	local fill = make("Frame", {
+		Size = UDim2.fromScale(0, 1), BackgroundColor3 = th("ACCENT"), BorderSizePixel = 0,
+	}, track)
+	corner(fill, 2)
+	local knob = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.fromOffset(12, 12), BackgroundColor3 = th("TEXT"), BorderSizePixel = 0, ZIndex = 2,
+	}, track)
+	corner(knob, 6)
+
+	local step = o.step or 1
+	local function snap(v)
+		v = math.clamp(v, o.min, o.max)
+		v = o.min + math.floor((v - o.min) / step + 0.5) * step
+		return math.clamp(v, o.min, o.max)
+	end
+
+	local value = snap(o.value or o.min)
+	local function render()
+		local f = (value - o.min) / (o.max - o.min)
+		fill.Size = UDim2.fromScale(f, 1)
+		knob.Position = UDim2.fromScale(f, 0.5)
+		if o.onVisual then o.onVisual(value) end
+	end
+	render()
+
+	local obj = {}
+	function obj.get() return value end
+	function obj.set(v, silent)
+		v = snap(v)
+		if math.abs(v - value) < 1e-6 then return end
+		value = v
+		render()
+		if not silent and o.onChange then o.onChange(value) end
+	end
+
+	local dragging = false
+	local function fromInput(input)
+		local w = track.AbsoluteSize.X
+		if w <= 0 then return end
+		local f = math.clamp((input.Position.X - track.AbsolutePosition.X) / w, 0, 1)
+		obj.set(o.min + f * (o.max - o.min))
+	end
+	hit.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			fromInput(input)
+		end
+	end)
+	table.insert(conns, UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch) then
+			fromInput(input)
+		end
+	end))
+	table.insert(conns, UserInputService.InputEnded:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch) then
+			dragging = false
+		end
+	end))
+
+	if minus then minus.Activated:Connect(function() obj.set(value - step) end) end
+	if plus then plus.Activated:Connect(function() obj.set(value + step) end) end
+	return obj
+end
+
+-- list scroll
+local function makeList(parent, size, pos, plain)
 	local s = make("ScrollingFrame", {
 		Size = size, Position = pos or UDim2.new(),
-		BackgroundColor3 = th("SIDE"), BackgroundTransparency = 0.25, BorderSizePixel = 0,
+		BackgroundColor3 = th("SIDE"), BackgroundTransparency = plain and 1 or 0.25, BorderSizePixel = 0,
 		ScrollBarThickness = 3, ScrollBarImageColor3 = th("ACCENT"),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+		ScrollingDirection = Enum.ScrollingDirection.Y,
 	}, parent)
-	corner(s, 8)
-	glowStroke(s, 1)
+	if not plain then
+		corner(s, 8)
+		glowStroke(s, 1)
+	end
 	make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, s)
 	make("UIPadding", {
-		PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6),
-		PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 8),
+		PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4),
+		PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 8),
 	}, s)
 	return s
 end
 
 local function smallButton(parent, text, pos, dim)
 	local b = make("TextButton", {
-		AnchorPoint = Vector2.new(1, 0.5), Position = pos, Size = UDim2.fromOffset(48, 24),
+		AnchorPoint = Vector2.new(1, 0.5), Position = pos, Size = UDim2.fromOffset(44, 22),
 		BackgroundColor3 = dim and th("HOVER") or th("PANEL"), BorderSizePixel = 0,
 		Text = text, TextColor3 = dim and th("GRAY") or th("TEXT"),
 		Font = Enum.Font.GothamBold, TextSize = 10, AutoButtonColor = false,
@@ -845,57 +945,446 @@ local function smallButton(parent, text, pos, dim)
 	return b
 end
 
-local function sectionLabel(parent, text, props)
-	local p = {
-		Position = UDim2.fromOffset(2, 0), Size = UDim2.fromOffset(120, 14),
-		BackgroundTransparency = 1, Text = text, TextColor3 = th("GRAY"),
-		Font = Enum.Font.GothamBold, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left,
-	}
-	if props then for k, v in pairs(props) do p[k] = v end end
-	return make("TextLabel", p, parent)
+local GREEN = Color3.fromRGB(90, 225, 130)
+local REDC = Color3.fromRGB(255, 95, 95)
+local function paintBadge(l)
+	l.Text = unlocked and "KEY AKTIF" or "TERKUNCI"
+	l.TextColor3 = unlocked and GREEN or REDC
+end
+
+-- panel tengah (judul + garis + badge kunci opsional)
+local function makeCenter(page, title, badge)
+	local f = make("Frame", {
+		Size = UDim2.fromOffset(CW, PH), BorderSizePixel = 0, BackgroundColor3 = th("SIDE"),
+	}, page)
+	regPanel(f, 0.25)
+	corner(f, 10)
+	glowStroke(f, 1)
+	label(f, { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 0, 16), Text = title, TextSize = 12 })
+	if badge then
+		local bl = label(f, {
+			AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 9), Size = UDim2.fromOffset(110, 14),
+			Text = "", TextSize = 10, TextXAlignment = Enum.TextXAlignment.Right,
+		})
+		table.insert(badges, bl)
+		paintBadge(bl)
+	end
+	make("Frame", {
+		Position = UDim2.fromOffset(12, 28), Size = UDim2.new(1, -24, 0, 1),
+		BackgroundColor3 = th("STROKE"), BorderSizePixel = 0,
+	}, f)
+	return f
+end
+
+local function makeClearBtn(parent, y)
+	return make("TextButton", {
+		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, y), Size = UDim2.fromOffset(44, 16),
+		BackgroundTransparency = 1, Text = "Clear", TextColor3 = th("ACCENT2"),
+		Font = Enum.Font.GothamBold, TextSize = 10,
+	}, parent)
+end
+
+-- ================= REGISTRY TAB / SETTING =================
+local tabs = {}
+for _, n in ipairs(tabNames) do tabs[n] = { settings = {}, features = {}, toggles = {} } end
+
+UI.getSetting = function(tab, name)
+	local t = tabs[tab]
+	local s = t and t.settings[name]
+	if s then return s.ctl.get() end
+	return nil
+end
+UI.setSetting = function(tab, name, value)
+	local t = tabs[tab]
+	local s = t and t.settings[name]
+	if s then s.ctl.set(value) end
+end
+UI.getFeature = function(tab, name)
+	local t = tabs[tab]
+	local f = t and t.features[name]
+	return f and f() or nil
+end
+
+-- buka / kunci semua fitur
+local function setUnlocked(state)
+	state = not not state
+	unlocked = state
+	for _, l in ipairs(badges) do
+		if l.Parent then paintBadge(l) end
+	end
+	if not state then
+		for _, t in pairs(tabs) do
+			for _, tg in pairs(t.toggles) do tg.set(false) end
+		end
+		UI.setStatus("Terkunci")
+	else
+		UI.setStatus("Key aktif")
+	end
+end
+
+-- efek internal dari beberapa setting (sisanya lewat hook UI.onXxx)
+local streakFrame
+local effects = {
+	["Fitur/Kecepatan Tween"] = function(v) tweenSpeed = v end,
+	["Fitur/Transparansi"] = function(v) applyAlpha(v / 100) end,
+	["Fitur/Skala UI"] = function(v) setMul = v / 100; applyScale() end,
+	["Tema/Super Modern Mode"] = function(s) setModern(s) end,
+	["Tema/Efek Kilatan"] = function(s) if streakFrame then streakFrame.Visible = s end end,
+	["Tema/Efek Balok"] = function(s)
+		for _, b in ipairs(blocks) do b.frame.Visible = s end
+	end,
+	["Tema/Opasitas Background"] = function(v) bgImg.ImageTransparency = 1 - v / 100 end,
+}
+
+-- definisi pengaturan tiap tab (beda-beda)
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local SETTINGS = {
+	["Fitur"] = {
+		{ type = "slider", name = "Metode Farming", min = 1, max = 3, step = 1, default = 1, recommended = 1, labels = { "TP", "Paksa", "Instant" } },
+		{ type = "slider", name = "Speed Gerak Paksa", min = 10, max = 500, step = 10, default = 100, recommended = 100 },
+		{ type = "slider", name = "Tween Speed", min = 10, max = 500, step = 10, default = 120, recommended = 120 },
+		{ type = "slider", name = "Kecepatan Tween", min = 1, max = 30, step = 1, default = 15, recommended = 20 },
+		{ type = "slider", name = "Transparansi", min = 0, max = 60, step = 5, default = 0, recommended = 10, unit = "%" },
+		{ type = "slider", name = "Skala UI", min = 70, max = 130, step = 5, default = 100, recommended = isMobile and 85 or 100, unit = "%" },
+		{ type = "toggle", name = "Notifikasi", default = false, recommended = true },
+		{ type = "toggle", name = "Auto Hide", default = false, recommended = false },
+	},
+	["Logs"] = {
+		{ type = "slider", name = "Maks Feed", min = 5, max = 50, step = 5, default = 20, recommended = 30 },
+		{ type = "slider", name = "Delay Join", min = 0, max = 10, step = 0.5, default = 0, recommended = 1.5, unit = "s" },
+		{ type = "toggle", name = "Notifikasi", default = false, recommended = true },
+		{ type = "toggle", name = "Suara", default = false, recommended = false },
+	},
+	["History"] = {
+		{ type = "slider", name = "Batas Riwayat", min = 10, max = 100, step = 10, default = 50, recommended = 30 },
+		{ type = "toggle", name = "Simpan Otomatis", default = false, recommended = true },
+		{ type = "toggle", name = "Tampilkan Waktu", default = true, recommended = true },
+	},
+	["Tema"] = {
+		{ type = "slider", name = "Opasitas Background", min = 0, max = 40, step = 2, default = 18, recommended = 14, unit = "%" },
+		{ type = "toggle", name = "Super Modern Mode", default = false, recommended = false },
+		{ type = "toggle", name = "Efek Kilatan", default = true, recommended = true },
+		{ type = "toggle", name = "Efek Balok", default = true, recommended = true },
+	},
+	["System Key"] = {
+		{ type = "toggle", name = "Ingat Key", default = true, recommended = true },
+		{ type = "toggle", name = "Salin Otomatis", default = true, recommended = true },
+		{ type = "toggle", name = "Auto Check", default = false, recommended = true },
+	},
+}
+
+local function fmtValue(d, v)
+	if d.labels then
+		return d.labels[math.floor(v + 0.5)] or tostring(v)
+	end
+	local s
+	if (d.step or 1) < 1 then
+		s = string.format("%.1f", v)
+	else
+		s = tostring(math.floor(v + 0.5))
+	end
+	return s .. (d.unit or "")
+end
+
+-- panel pengaturan (kanan) + tombol Default / Recommended
+local function buildSettingsPanel(tabName, page)
+	local tab = tabs[tabName]
+	local defs = SETTINGS[tabName] or {}
+
+	local panel = make("Frame", {
+		Position = UDim2.fromOffset(CW + 8, 0), Size = UDim2.fromOffset(SW, PH),
+		BorderSizePixel = 0, BackgroundColor3 = th("SIDE"),
+	}, page)
+	regPanel(panel, 0.25)
+	corner(panel, 10)
+	glowStroke(panel, 1)
+
+	label(panel, { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 0, 16), Text = "Pengaturan", TextSize = 12 })
+	make("Frame", {
+		Position = UDim2.fromOffset(12, 28), Size = UDim2.new(1, -24, 0, 1),
+		BackgroundColor3 = th("STROKE"), BorderSizePixel = 0,
+	}, panel)
+
+	local list = makeList(panel, UDim2.new(1, -8, 1, -72), UDim2.fromOffset(4, 32), true)
+
+	for i, d in ipairs(defs) do
+		local key = tabName .. "/" .. d.name
+		if d.type == "slider" then
+			local item = make("Frame", {
+				LayoutOrder = i, Size = UDim2.new(1, 0, 0, 46), BackgroundTransparency = 1,
+			}, list)
+			label(item, { Size = UDim2.new(1, -46, 0, 16), Text = d.name, TextTruncate = Enum.TextTruncate.AtEnd })
+			local val = label(item, {
+				AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0),
+				Size = UDim2.fromOffset(46, 16), TextColor3 = th("ACCENT2"), TextXAlignment = Enum.TextXAlignment.Right,
+			})
+			local sl = makeSlider(item, {
+				Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 20), buttons = true,
+				min = d.min, max = d.max, step = d.step, value = d.default,
+				onVisual = function(v) val.Text = fmtValue(d, v) end,
+				onChange = function(v)
+					local eff = effects[key]
+					if eff then pcall(eff, v) end
+					fire("onSlider", d.name, v, tabName)
+				end,
+			})
+			tab.settings[d.name] = { ctl = sl, default = d.default, recommended = d.recommended }
+		else
+			local item = make("Frame", {
+				LayoutOrder = i, Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1,
+			}, list)
+			label(item, { Size = UDim2.new(1, -46, 1, 0), Text = d.name, TextTruncate = Enum.TextTruncate.AtEnd })
+			local tg = makeToggle(item, {
+				AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
+			}, function(s)
+				local eff = effects[key]
+				if eff then pcall(eff, s) end
+				fire("onToggle", d.name, s, tabName)
+			end)
+			if d.default then tg.set(true, true, true) end
+			tab.settings[d.name] = { ctl = tg, default = d.default, recommended = d.recommended }
+		end
+	end
+
+	local function applyPreset(mode)
+		for _, s in pairs(tab.settings) do
+			s.ctl.set(mode == "default" and s.default or s.recommended)
+		end
+		fire("onPreset", tabName, mode)
+	end
+
+	local function presetBtn(text, pos, mode)
+		local isRec = mode == "recommended"
+		local b = make("TextButton", {
+			AnchorPoint = Vector2.new(0, 1), Position = pos, Size = UDim2.fromOffset(72, 26),
+			BackgroundColor3 = isRec and th("ACCENT") or th("PANEL"), BorderSizePixel = 0,
+			Text = text, TextColor3 = isRec and th("ONACC") or th("TEXT"),
+			Font = Enum.Font.GothamBold, TextSize = 9, AutoButtonColor = false,
+		}, panel)
+		corner(b, 7)
+		glowStroke(b, 1, isRec and "ACCENT_DK" or nil)
+		fx(b, b, 0.05)
+		b.Activated:Connect(function()
+			applyPreset(mode)
+			b.Text = "OK!"
+			task.delay(0.8, function()
+				if b.Parent then b.Text = text end
+			end)
+		end)
+	end
+	presetBtn("Default", UDim2.new(0, 8, 1, -8), "default")
+	presetBtn("Recommended", UDim2.new(0, 86, 1, -8), "recommended")
 end
 
 ---------------------------------------------------------------------
--- HALAMAN: FINDER (egg acak + income acak per rentang)
+-- TAB: FITUR  (Bike for Egg + Farming Rarity)
 ---------------------------------------------------------------------
 do
-	local p = pages.Finder
+	local tabName = "Fitur"
+	local tab = tabs[tabName]
+	local p = pages[tabName]
+	local f = makeCenter(p, "Features", true)
+	local list = makeList(f, UDim2.new(1, -12, 1, -82), UDim2.fromOffset(6, 34), true)
 
-	-- { "Nama Egg", minM, maxM }  (income dalam juta / M per detik)
-	-- Tambah egg Bike for Egg lain di sini, atau lewat UI.eggs dari luar.
-	local EGGS = {
-		{ "King Snake", 10, 500 },
-		{ "Dragon Ice", 80, 800 },
-	}
-	UI.eggs = EGGS
+	local function makeFeatureRow(def, order)
+		local ROW_H = 38
 
-	local finderOn = false
-	makeSwitchCard(p, "Finder (Random)", UDim2.new(1, 0, 0, 38), UDim2.new(0, 0, 0, 0), 0, true,
-		function(on) finderOn = on end)
+		-- baris tombol aksi (tanpa toggle)
+		if def.kind == "button" then
+			local row = make("Frame", {
+				LayoutOrder = order, Size = UDim2.new(1, 0, 0, ROW_H),
+				BackgroundColor3 = th("PANEL"), BorderSizePixel = 0,
+			}, list)
+			corner(row, 8)
+			glowStroke(row, 1)
+			label(row, {
+				Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -86, 1, 0),
+				Text = def.name, TextTruncate = Enum.TextTruncate.AtEnd,
+			})
+			local b = smallButton(row, def.button or "RUN", UDim2.new(1, -8, 0.5, 0), false)
+			b.Size = UDim2.fromOffset(60, 22)
+			b.Activated:Connect(function()
+				if not unlocked then
+					toast("Terkunci! Verifikasi key di tab System Key")
+					return
+				end
+				local fn = actions[def.name]
+				if fn then task.spawn(fn) else toast("Aksi belum siap") end
+			end)
+			return
+		end
 
-	sectionLabel(p, "LIVE FEED", { Position = UDim2.fromOffset(2, 46), Size = UDim2.fromOffset(100, 14) })
-	local clearBtn = make("TextButton", {
-		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -2, 0, 44), Size = UDim2.fromOffset(44, 16),
-		BackgroundTransparency = 1, Text = "Clear", TextColor3 = th("TEXT"),
-		Font = Enum.Font.GothamBold, TextSize = 10,
-	}, p)
+		local row = make("Frame", {
+			LayoutOrder = order, Size = UDim2.new(1, 0, 0, ROW_H),
+			BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, ClipsDescendants = true,
+		}, list)
+		corner(row, 8)
+		glowStroke(row, 1)
 
-	local list = makeList(p, UDim2.new(1, 0, 1, -64), UDim2.fromOffset(0, 64))
+		local rightW = 0
+		if def.kind == "dropdown" then rightW = 116 elseif def.kind == "slider" then rightW = 104 end
 
-	local counter, cards = 0, {}
-	local MAX_CARDS = 30
+		local tg = makeToggle(row, { Position = UDim2.fromOffset(10, ROW_H / 2), gated = true }, function(s)
+			activeFeatures[tabName .. "/" .. def.name] = s or nil
+			refreshKaitun()
+			fire("onToggle", def.name, s, tabName)
+		end)
+		tab.toggles[def.name] = tg
+		label(row, {
+			Position = UDim2.fromOffset(56, 0), Size = UDim2.new(1, -(56 + rightW + 8), 0, ROW_H),
+			Text = def.name, TextTruncate = Enum.TextTruncate.AtEnd,
+		})
 
-	local function fmtIncome(m)
-		if m >= 1000 then return string.format("$%.2fB/s", m / 1000) end
-		return string.format("$%dM/s", m)
+		local getValue = function() return nil end
+
+		if def.kind == "dropdown" then
+			local opts = def.options
+			local selected = opts[1]
+			local open = false
+			local fullH = ROW_H + 4 + #opts * 26
+
+			local btn = make("TextButton", {
+				AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 6), Size = UDim2.fromOffset(108, 26),
+				BackgroundColor3 = th("HOVER"), BorderSizePixel = 0, Text = "", AutoButtonColor = false,
+			}, row)
+			corner(btn, 6)
+			glowStroke(btn, 1)
+			local txt = label(btn, {
+				Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, -26, 1, 0), Text = selected,
+				Font = Enum.Font.Gotham, TextTruncate = Enum.TextTruncate.AtEnd,
+			})
+			local arrow = label(btn, {
+				AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, 0), Size = UDim2.fromOffset(14, 14),
+				Text = "v", TextColor3 = th("GRAY"), TextSize = 10, TextXAlignment = Enum.TextXAlignment.Center,
+			})
+
+			local function setOpen(s)
+				open = s
+				arrow.Rotation = s and 180 or 0
+				tween(row, TweenInfo.new(dur(0.18), Enum.EasingStyle.Quad), {
+					Size = UDim2.new(1, 0, 0, s and fullH or ROW_H),
+				})
+			end
+
+			for i, o in ipairs(opts) do
+				local ob = make("TextButton", {
+					Position = UDim2.fromOffset(8, ROW_H + 2 + (i - 1) * 26), Size = UDim2.new(1, -16, 0, 24),
+					BackgroundColor3 = th("HOVER"), BorderSizePixel = 0, Text = o, TextColor3 = th("TEXT"),
+					Font = Enum.Font.Gotham, TextSize = 11, AutoButtonColor = false,
+				}, row)
+				corner(ob, 6)
+				ob.Activated:Connect(function()
+					selected = o
+					txt.Text = o
+					setOpen(false)
+					fire("onDropdown", def.name, o, tabName)
+				end)
+			end
+			btn.Activated:Connect(function() setOpen(not open) end)
+			getValue = function() return selected end
+
+		elseif def.kind == "slider" then
+			local sl = makeSlider(row, {
+				AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0),
+				Size = UDim2.fromOffset(92, 20),
+				min = def.min, max = def.max, step = def.step or 1, value = def.value or def.min,
+				onChange = function(v) fire("onSlider", def.name, v, tabName) end,
+			})
+			getValue = sl.get
+		end
+
+		tab.features[def.name] = function()
+			return { enabled = tg.get(), value = getValue() }
+		end
 	end
+
+	local zoneOpts = { "Auto" }
+	for i = 1, ZONE_COUNT do zoneOpts[#zoneOpts + 1] = "Zone " .. i end
+
+	local featureDefs = {
+		{ name = "Auto Steal", kind = "dropdown", options = zoneOpts },
+		{ name = "Farming Rarity", kind = "dropdown", options = RARITY_LIST },
+		{ name = "Auto Bring Egg" },
+		{ name = "Auto Treadmill" },
+		{ name = "Auto Upgrade Treadmill" },
+		{ name = "Auto Buy Bike" },
+		{ name = "Auto Open Egg" },
+		{ name = "Auto Sell All" },
+		{ name = "Steal Sekarang", kind = "button", button = "STEAL" },
+		{ name = "Dump Egg Rarity", kind = "button", button = "DUMP" },
+	}
+	for i, d in ipairs(featureDefs) do makeFeatureRow(d, i) end
+
+	local box = make("TextBox", {
+		AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -10), Size = UDim2.new(1, -24, 0, 32),
+		BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, Text = "",
+		PlaceholderText = "Enter feature details...", PlaceholderColor3 = th("GRAY"),
+		TextColor3 = th("TEXT"), Font = Enum.Font.Gotham, TextSize = 12,
+		ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
+	}, f)
+	corner(box, 8)
+	glowStroke(box, 1)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, box)
+	box.FocusLost:Connect(function(enter)
+		if enter then fire("onInput", tabName, box.Text) end
+	end)
+end
+
+---------------------------------------------------------------------
+-- TAB: LOGS
+---------------------------------------------------------------------
+do
+	local tabName = "Logs"
+	local tab = tabs[tabName]
+	local p = pages[tabName]
+	local f = makeCenter(p, "Logs", true)
+
+	local function miniSwitch(name, pos)
+		local card = make("Frame", {
+			Position = pos, Size = UDim2.new(0.5, -13, 0, 32),
+			BackgroundColor3 = th("PANEL"), BorderSizePixel = 0,
+		}, f)
+		corner(card, 8)
+		glowStroke(card, 1)
+		label(card, { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -56, 1, 0), Text = name })
+		local tg = makeToggle(card, {
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), gated = true,
+		}, function(s)
+			activeFeatures[tabName .. "/" .. name] = s or nil
+			refreshKaitun()
+			fire("onToggle", name, s, tabName)
+		end)
+		tab.toggles[name] = tg
+		tab.features[name] = function() return { enabled = tg.get() } end
+	end
+	miniSwitch("Auto-Join", UDim2.new(0, 10, 0, 36))
+	miniSwitch("Auto-Force", UDim2.new(0.5, 3, 0, 36))
+
+	label(f, {
+		Position = UDim2.fromOffset(12, 76), Size = UDim2.fromOffset(100, 14),
+		Text = "LIVE FEED", TextColor3 = th("GRAY"), TextSize = 10,
+	})
+	local clearBtn = makeClearBtn(f, 75)
+
+	local list = makeList(f, UDim2.new(1, -12, 1, -100), UDim2.fromOffset(6, 94), false)
+
+	local feed = {}
+	local counter = 0
+	local maxFeed = 20
+	local function trimFeed()
+		while #feed > maxFeed do
+			local old = table.remove(feed, 1)
+			if old and old.Parent then old:Destroy() end
+		end
+	end
+	effects["Logs/Maks Feed"] = function(v) maxFeed = v; trimFeed() end
 
 	UI.addLog = function(name, income, info)
 		counter += 1
 		local entry = {
-			name = tostring(name or "Egg"),
-			income = tostring(income or "$0M/s"),
-			info = tostring(info or ""),
+			name = tostring(name or "Item Name"),
+			income = tostring(income or "$0.0B/s"),
+			info = tostring(info or "0/5 · Rarity · 0:00"),
 		}
 
 		local card = make("Frame", {
@@ -909,112 +1398,136 @@ do
 			Position = UDim2.fromOffset(8, 9), Size = UDim2.fromOffset(3, 34),
 			BackgroundColor3 = th("ACCENT"), BorderSizePixel = 0,
 		}, card)
-
 		local icon = make("Frame", {
-			Position = UDim2.fromOffset(18, 11), Size = UDim2.fromOffset(30, 30),
+			Position = UDim2.fromOffset(16, 13), Size = UDim2.fromOffset(26, 26),
 			BackgroundColor3 = th("OFF"), BorderSizePixel = 0,
 		}, card)
-		corner(icon, 15)
-		make("TextLabel", {
-			Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "E",
-			TextColor3 = th("ACCENT"), Font = Enum.Font.GothamBlack, TextSize = 14,
-		}, icon)
+		corner(icon, 13)
 
-		make("TextLabel", {
-			Position = UDim2.fromOffset(56, 8), Size = UDim2.new(1, -172, 0, 18),
-			BackgroundTransparency = 1, Text = string.format("%s [ %s ]", entry.name, entry.income),
-			TextColor3 = th("TEXT"), Font = Enum.Font.GothamBold, TextSize = 12,
-			TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-		}, card)
-		make("TextLabel", {
-			Position = UDim2.fromOffset(56, 28), Size = UDim2.new(1, -172, 0, 14),
-			BackgroundTransparency = 1, Text = entry.info, TextColor3 = th("GRAY"),
-			Font = Enum.Font.Gotham, TextSize = 10,
-			TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-		}, card)
+		label(card, {
+			Position = UDim2.fromOffset(48, 8), Size = UDim2.new(1, -152, 0, 18),
+			Text = string.format("%s [ %s ]", entry.name, entry.income),
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+		label(card, {
+			Position = UDim2.fromOffset(48, 28), Size = UDim2.new(1, -152, 0, 14),
+			Text = entry.info, TextColor3 = th("GRAY"), Font = Enum.Font.Gotham, TextSize = 10,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		})
 
-		local joinBtn = smallButton(card, "JOIN", UDim2.new(1, -62, 0.5, 0), false)
+		local joinBtn = smallButton(card, "JOIN", UDim2.new(1, -56, 0.5, 0), false)
 		local copyBtn = smallButton(card, "COPY", UDim2.new(1, -8, 0.5, 0), true)
-		joinBtn.Activated:Connect(function()
-			toast("JOIN: " .. entry.name)
-			local okc, err = pcall(UI.onJoin, entry)
-			if not okc then warn("[Senar Hub] onJoin: " .. tostring(err)) end
-		end)
-		copyBtn.Activated:Connect(function()
-			local txt = entry.name .. " " .. entry.income
-			if setclipboard then pcall(setclipboard, txt) end
-			toast("Disalin: " .. txt)
-			local okc, err = pcall(UI.onCopy, entry)
-			if not okc then warn("[Senar Hub] onCopy: " .. tostring(err)) end
-		end)
+		joinBtn.Activated:Connect(function() fire("onJoin", entry) end)
+		copyBtn.Activated:Connect(function() fire("onCopy", entry) end)
 
-		cards[#cards + 1] = card
-		if #cards > MAX_CARDS then
-			local old = table.remove(cards, 1)
-			if old then old:Destroy() end
-		end
+		table.insert(feed, card)
+		trimFeed()
 		return card
 	end
 
 	UI.clearLogs = function()
-		for _, cd in ipairs(cards) do
-			if cd then cd:Destroy() end
+		for _, cd in ipairs(feed) do
+			if cd.Parent then cd:Destroy() end
 		end
-		table.clear(cards)
+		table.clear(feed)
 	end
 
 	clearBtn.Activated:Connect(function()
 		UI.clearLogs()
-		local okc, err = pcall(UI.onClear)
-		if not okc then warn("[Senar Hub] onClear: " .. tostring(err)) end
+		fire("onClear", tabName)
 	end)
 
-	local rng = Random.new()
-	local function findOne()
-		local pool = UI.eggs
-		if type(pool) ~= "table" or #pool == 0 then return end
-		local e = pool[rng:NextInteger(1, #pool)]
-		local name, lo, hi = e[1], e[2], e[3]
-		if hi < lo then lo, hi = hi, lo end
-		local m = rng:NextInteger(lo, hi)
-		local entry = {
-			name = name, income = fmtIncome(m), incomeM = m,
-			info = string.format("Range %d-%dM · %s", lo, hi, os.date("%H:%M:%S")),
-		}
-		UI.addLog(entry.name, entry.income, entry.info)
-		local okc, err = pcall(UI.onFind, entry)
-		if not okc then warn("[Senar Hub] onFind: " .. tostring(err)) end
+	for i = 1, 3 do
+		UI.addLog("Item Name " .. i, "$0.0B/s", "0/5 · Rarity · 0:0" .. i)
+	end
+end
+
+---------------------------------------------------------------------
+-- TAB: HISTORY
+---------------------------------------------------------------------
+do
+	local tabName = "History"
+	local p = pages[tabName]
+	local f = makeCenter(p, "History")
+	local clearBtn = makeClearBtn(f, 7)
+	local list = makeList(f, UDim2.new(1, -12, 1, -40), UDim2.fromOffset(6, 34), true)
+
+	local empty = label(list, {
+		Size = UDim2.new(1, 0, 0, 30), Text = "Belum ada riwayat", TextColor3 = th("GRAY"),
+		Font = Enum.Font.Gotham, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center,
+	})
+
+	local rows, timeLbls = {}, {}
+	local n = 0
+	local maxHistory = 50
+	local showTime = true
+	local function trimHistory()
+		while #rows > maxHistory do
+			local old = table.remove(rows, 1)
+			if old and old.Parent then old:Destroy() end
+		end
+		empty.Visible = (#rows == 0)
+	end
+	effects["History/Batas Riwayat"] = function(v) maxHistory = v; trimHistory() end
+	effects["History/Tampilkan Waktu"] = function(s)
+		showTime = s
+		for _, l in ipairs(timeLbls) do
+			if l.Parent then l.Visible = s end
+		end
 	end
 
-	task.spawn(function()
-		while gui.Parent do
-			if finderOn and Gate.unlocked then
-				findOne()
-				task.wait(rng:NextNumber(3, 9))
-			else
-				task.wait(0.5)
-			end
+	UI.addHistory = function(text)
+		n += 1
+		empty.Visible = false
+		local row = make("Frame", {
+			LayoutOrder = -n, Size = UDim2.new(1, 0, 0, 30),
+			BackgroundColor3 = th("PANEL"), BorderSizePixel = 0,
+		}, list)
+		corner(row, 8)
+		glowStroke(row, 1)
+		label(row, {
+			Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -84, 1, 0),
+			Text = tostring(text), TextTruncate = Enum.TextTruncate.AtEnd,
+		})
+		local tl = label(row, {
+			AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 0), Size = UDim2.fromOffset(62, 30),
+			Text = os.date("%H:%M:%S"), TextColor3 = th("GRAY"), Font = Enum.Font.Gotham, TextSize = 10,
+			TextXAlignment = Enum.TextXAlignment.Right, Visible = showTime,
+		})
+		table.insert(timeLbls, tl)
+		table.insert(rows, row)
+		trimHistory()
+		return row
+	end
+
+	UI.clearHistory = function()
+		for _, r in ipairs(rows) do
+			if r.Parent then r:Destroy() end
 		end
+		table.clear(rows)
+		table.clear(timeLbls)
+		empty.Visible = true
+	end
+
+	clearBtn.Activated:Connect(function()
+		UI.clearHistory()
+		fire("onClear", tabName)
 	end)
 end
 
 ---------------------------------------------------------------------
--- HALAMAN: SETTINGS (Super Modern + Tema)
+-- TAB: TEMA  (23 tema + Super Modern lewat panel pengaturan)
 ---------------------------------------------------------------------
 do
-	local p = pages.Settings
-	sectionLabel(p, "SETTINGS", { Size = UDim2.fromOffset(100, 14) })
-	local list = makeList(p, UDim2.new(1, 0, 1, -20), UDim2.fromOffset(0, 20))
-
-	makeSwitchCard(list, "Super Modern Mode", UDim2.new(1, 0, 0, 38), nil, 1, false, setModern)
-
-	sectionLabel(list, "THEME", { Position = UDim2.new(), Size = UDim2.new(1, 0, 0, 18), LayoutOrder = 10 })
+	local p = pages["Tema"]
+	local f = makeCenter(p, "Theme")
+	local list = makeList(f, UDim2.new(1, -12, 1, -40), UDim2.fromOffset(6, 34), true)
 
 	local themeBtns = {}
 	for i, e in ipairs(THEMES) do
 		local name, tm = e[1], e[2]
 		local b = make("TextButton", {
-			LayoutOrder = 10 + i, Size = UDim2.new(1, 0, 0, 32),
+			LayoutOrder = i, Size = UDim2.new(1, 0, 0, 32),
 			BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, Text = "", AutoButtonColor = false,
 		}, list)
 		corner(b, 8)
@@ -1034,12 +1547,10 @@ do
 		}, b)
 		corner(sw2, 4)
 
-		make("TextLabel", {
-			Position = UDim2.fromOffset(48, 0), Size = UDim2.new(1, -74, 1, 0),
-			BackgroundTransparency = 1, Text = name, TextColor3 = th("TEXT"),
-			Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
+		label(b, {
+			Position = UDim2.fromOffset(48, 0), Size = UDim2.new(1, -74, 1, 0), Text = name,
 			TextTruncate = Enum.TextTruncate.AtEnd,
-		}, b)
+		})
 		local sel = make("Frame", {
 			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
 			Size = UDim2.fromOffset(8, 8), BackgroundColor3 = th("ACCENT"),
@@ -1051,8 +1562,7 @@ do
 		fx(b, b, 0.025)
 		b.Activated:Connect(function()
 			applyTheme(name)
-			local okc, err = pcall(UI.onTheme, name)
-			if not okc then warn("[Senar Hub] onTheme: " .. tostring(err)) end
+			fire("onTheme", name)
 		end)
 	end
 
@@ -1067,54 +1577,54 @@ do
 end
 
 ---------------------------------------------------------------------
--- HALAMAN: SYSTEM KEY
+-- TAB: SYSTEM KEY
 ---------------------------------------------------------------------
 do
 	local p = pages["System Key"]
-	sectionLabel(p, "SYSTEM KEY", { Size = UDim2.fromOffset(100, 14) })
+	local f = makeCenter(p, "System Key", true)
 
 	local box = make("TextBox", {
-		Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 34),
+		Position = UDim2.fromOffset(12, 40), Size = UDim2.new(1, -24, 0, 34),
 		BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, Text = "",
 		PlaceholderText = "Masukkan key...", PlaceholderColor3 = th("GRAY"),
 		TextColor3 = th("TEXT"), Font = Enum.Font.Gotham, TextSize = 12,
 		ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
-	}, p)
+	}, f)
 	corner(box, 8)
 	glowStroke(box, 1)
 	make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, box)
 
 	local checkBtn = make("TextButton", {
-		Position = UDim2.fromOffset(0, 64), Size = UDim2.new(0.5, -4, 0, 32),
+		Position = UDim2.fromOffset(12, 82), Size = UDim2.new(0.5, -16, 0, 32),
 		BackgroundColor3 = th("ACCENT"), BorderSizePixel = 0, Text = "CHECK KEY",
 		TextColor3 = th("ONACC"), Font = Enum.Font.GothamBold, TextSize = 12, AutoButtonColor = false,
-	}, p)
+	}, f)
 	corner(checkBtn, 8)
 	glowStroke(checkBtn, 1, "ACCENT_DK")
 	fx(checkBtn, checkBtn, 0.04)
 
 	local getBtn = make("TextButton", {
-		Position = UDim2.new(0.5, 4, 0, 64), Size = UDim2.new(0.5, -4, 0, 32),
+		Position = UDim2.new(0.5, 4, 0, 82), Size = UDim2.new(0.5, -16, 0, 32),
 		BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, Text = "GET KEY",
 		TextColor3 = th("TEXT"), Font = Enum.Font.GothamBold, TextSize = 12, AutoButtonColor = false,
-	}, p)
+	}, f)
 	corner(getBtn, 8)
 	glowStroke(getBtn, 1)
 	fx(getBtn, getBtn, 0.04)
 
 	local premBtn = make("TextButton", {
-		Position = UDim2.fromOffset(0, 104), Size = UDim2.new(1, 0, 0, 30),
+		Position = UDim2.fromOffset(12, 122), Size = UDim2.new(1, -24, 0, 30),
 		BackgroundColor3 = Color3.fromRGB(88, 101, 242), BorderSizePixel = 0, Text = "PREMIUM KEY",
 		TextColor3 = WHITE, Font = Enum.Font.GothamBold, TextSize = 12, AutoButtonColor = false,
-	}, p)
+	}, f)
 	corner(premBtn, 8)
 	fx(premBtn, premBtn, 0.03)
 
 	-- progress bar
 	local track = make("Frame", {
-		Position = UDim2.fromOffset(0, 148), Size = UDim2.new(1, 0, 0, 12),
+		Position = UDim2.fromOffset(12, 168), Size = UDim2.new(1, -24, 0, 12),
 		BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, ClipsDescendants = true,
-	}, p)
+	}, f)
 	corner(track, 6)
 	glowStroke(track, 1)
 	local fill = make("Frame", {
@@ -1123,18 +1633,23 @@ do
 	corner(fill, 6)
 	addSweep(fill, "ACCENT", "FLASH")
 
-	local timeLbl = make("TextLabel", {
-		Position = UDim2.fromOffset(2, 164), Size = UDim2.new(1, 0, 0, 16),
-		BackgroundTransparency = 1, Text = "Tekan GET KEY (tunggu 5 menit)", TextColor3 = th("GRAY"),
-		Font = Enum.Font.Gotham, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
-	}, p)
-	local keyStatus = make("TextLabel", {
-		Position = UDim2.fromOffset(2, 186), Size = UDim2.new(1, 0, 0, 16),
-		BackgroundTransparency = 1, Text = "Belum diverifikasi (fitur terkunci)", TextColor3 = th("GRAY"),
-		Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
-	}, p)
+	local timeLbl = label(f, {
+		Position = UDim2.fromOffset(14, 186), Size = UDim2.new(1, -28, 0, 16),
+		Text = "Tekan GET KEY (tunggu 5 menit)", TextColor3 = th("GRAY"), Font = Enum.Font.Gotham,
+	})
+	local keyStatus = label(f, {
+		Position = UDim2.fromOffset(14, 208), Size = UDim2.new(1, -28, 0, 16),
+		Text = "Belum diverifikasi", TextColor3 = th("GRAY"),
+	})
+	UI.setKeyStatus = function(t) keyStatus.Text = tostring(t) end
 
 	-- ---- logika key ----
+	local function setting(name)
+		local v = UI.getSetting("System Key", name)
+		if v == nil then v = true end
+		return v
+	end
+
 	local function readSaved()
 		if not (isfile and readfile) then return nil end
 		local ok, s = pcall(function()
@@ -1144,7 +1659,6 @@ do
 		return nil
 	end
 	env.__SenarFreeKey = env.__SenarFreeKey or readSaved()
-	if env.__SenarFreeKey then box.Text = env.__SenarFreeKey end
 
 	local function validateKey(text)
 		text = (tostring(text or ""):gsub("%s+", ""))
@@ -1171,6 +1685,22 @@ do
 		return string.format("%02d:%02d", math.floor(s / 60), s % 60)
 	end
 
+	local function doCheck()
+		local ok, tier = validateKey(box.Text)
+		if ok then
+			keyStatus.Text = "Key valid  [" .. tier .. "]"
+			keyStatus.TextColor3 = GREEN
+			toast("Key valid (" .. tier .. ") - fitur terbuka")
+		else
+			keyStatus.Text = "Key tidak valid"
+			keyStatus.TextColor3 = REDC
+			toast("Key tidak valid - fitur terkunci")
+		end
+		setUnlocked(ok)
+		fire("onKeySubmit", box.Text)
+		fire("onKeyResult", ok, tier)
+	end
+
 	local waitId, waiting = 0, false
 	local function runWait()
 		waitId += 1
@@ -1192,14 +1722,18 @@ do
 			local key = genKey()
 			env.__SenarFreeKey = key
 			env.__SenarKeyStart = nil
-			if writefile then pcall(writefile, KEY_FILE, key) end
-			if setclipboard then pcall(setclipboard, key) end
+			if writefile and setting("Ingat Key") then pcall(writefile, KEY_FILE, key) end
+			local copied = false
+			if setclipboard and setting("Salin Otomatis") then copied = pcall(setclipboard, key) end
 			tween(fill, TweenInfo.new(0.3), { Size = UDim2.new(1, 0, 1, 0) })
 			box.Text = key
-			timeLbl.Text = "Key siap! Sudah disalin, tekan CHECK KEY"
+			timeLbl.Text = copied and "Key siap! Sudah disalin, tekan CHECK KEY" or "Key siap! Tekan CHECK KEY"
 			getBtn.Text = "GET KEY"
 			waiting = false
 			toast("Key kamu sudah jadi")
+			if setting("Auto Check") == true and UI.getSetting("System Key", "Auto Check") ~= nil then
+				doCheck()
+			end
 		end)
 	end
 
@@ -1210,28 +1744,12 @@ do
 		end
 		fill.Size = UDim2.new(0, 0, 1, 0)
 		env.__SenarKeyStart = os.time()
-		keyStatus.Text = "Belum diverifikasi (fitur terkunci)"
+		keyStatus.Text = "Belum diverifikasi"
 		keyStatus.TextColor3 = T.GRAY
 		runWait()
 	end)
 
-	checkBtn.Activated:Connect(function()
-		local ok, tier = validateKey(box.Text)
-		if ok then
-			keyStatus.Text = "Key valid  [" .. tier .. "] - fitur terbuka"
-			keyStatus.TextColor3 = Color3.fromRGB(90, 225, 130)
-			toast("Key valid (" .. tier .. ")")
-			setUnlocked(true, tier)
-		else
-			keyStatus.Text = Gate.unlocked and "Key tidak valid (fitur tetap terbuka)" or "Key tidak valid"
-			keyStatus.TextColor3 = Color3.fromRGB(255, 95, 95)
-			toast("Key tidak valid")
-		end
-		local c1, e1 = pcall(UI.onKeySubmit, box.Text)
-		if not c1 then warn("[Senar Hub] onKeySubmit: " .. tostring(e1)) end
-		local c2, e2 = pcall(UI.onKeyResult, ok, tier)
-		if not c2 then warn("[Senar Hub] onKeyResult: " .. tostring(e2)) end
-	end)
+	checkBtn.Activated:Connect(doCheck)
 
 	-- Premium Key -> Discord
 	premBtn.Activated:Connect(function()
@@ -1269,9 +1787,14 @@ do
 	if env.__SenarKeyStart then runWait() end
 end
 
-selectTab("System Key")
+-- panel pengaturan untuk semua tab (isinya beda per tab)
+for _, name in ipairs(tabNames) do
+	buildSettingsPanel(name, pages[name])
+end
 
--- ---------- Kilatan cahaya ----------
+selectTab("Fitur")
+
+-- ================= KILATAN CAHAYA =================
 do
 	local streak = make("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(-60, H / 2),
@@ -1286,6 +1809,7 @@ do
 		Position = UDim2.fromOffset(8, 0), Size = UDim2.fromOffset(5, H + 120),
 		BackgroundColor3 = BLACK, BackgroundTransparency = 0.5, BorderSizePixel = 0, ZIndex = 50,
 	}, streak)
+	streakFrame = streak
 
 	local tw = TweenService:Create(streak,
 		TweenInfo.new(2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 2.5),
@@ -1294,7 +1818,7 @@ do
 	table.insert(tweens, tw)
 end
 
--- ---------- Resize grip (kanan bawah) ----------
+-- ================= RESIZE GRIP (kanan bawah) =================
 do
 	local grip = make("TextButton", {
 		AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromOffset(W - 3, H - 3),
@@ -1314,14 +1838,14 @@ do
 	table.insert(conns, grip.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging, startMouse, startMul = true, input.Position, userMul
+			dragging, startMouse, startMul = true, input.Position, gripMul
 		end
 	end))
 	table.insert(conns, UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch) then
 			local d = input.Position - startMouse
-			userMul = math.clamp(startMul + (d.X + d.Y) / 600, 0.4 / math.max(fitMul, 0.01), 3)
+			gripMul = math.clamp(startMul + (d.X + d.Y) / 600, 0.4 / math.max(fitMul, 0.01), 3)
 			applyScale()
 		end
 	end))
@@ -1334,7 +1858,7 @@ do
 	end))
 end
 
--- ---------- Buka / tutup ----------
+-- ================= BUKA / TUTUP =================
 local opened = true
 local function setOpen(state)
 	opened = state
@@ -1349,10 +1873,100 @@ local function setOpen(state)
 		end)
 	end
 end
-hideBtn.Activated:Connect(function() setOpen(false) end)
 
--- ---------- Drag window ----------
-local function attachDrag(dragFrame)
+-- ================= TITLE BAR =================
+local hubGrad
+local function rainbowSeq(t)
+	local kps = {}
+	for i = 0, 6 do
+		kps[#kps + 1] = ColorSequenceKeypoint.new(i / 6, Color3.fromHSV((t * 0.25 + i / 6) % 1, 0.85, 1))
+	end
+	return ColorSequence.new(kps)
+end
+
+do
+	local titleRow = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 0),
+		Size = UDim2.fromOffset(0, 28), AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 1,
+	}, main)
+	make("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5),
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+	}, titleRow)
+
+	-- "Senar": Se = accent, nar = accent2
+	local senar = make("TextLabel", {
+		Size = UDim2.fromOffset(0, 28), AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 1, Text = "Senar", TextColor3 = WHITE,
+		Font = Enum.Font.GothamBlack, TextSize = 16, LayoutOrder = 1,
+	}, titleRow)
+	local senarGrad = make("UIGradient", {}, senar)
+	onTheme(function()
+		senarGrad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, T.ACCENT),
+			ColorSequenceKeypoint.new(0.40, T.ACCENT),
+			ColorSequenceKeypoint.new(0.44, T.ACCENT2),
+			ColorSequenceKeypoint.new(1, T.ACCENT2),
+		})
+	end)
+
+	-- "Hub": rainbow
+	local hub = make("TextLabel", {
+		Size = UDim2.fromOffset(0, 28), AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 1, Text = "Hub", TextColor3 = WHITE,
+		Font = Enum.Font.GothamBlack, TextSize = 16, LayoutOrder = 2,
+	}, titleRow)
+	hubGrad = make("UIGradient", {}, hub)
+	hubGrad.Color = rainbowSeq(0)
+
+	-- tombol window
+	local function winBtn(posX, hoverColor)
+		local b = make("TextButton", {
+			AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, posX, 0, 3), Size = UDim2.fromOffset(26, 22),
+			BackgroundColor3 = hoverColor, BackgroundTransparency = 1, BorderSizePixel = 0,
+			Text = "", AutoButtonColor = false, ZIndex = 45,
+		}, main)
+		corner(b, 6)
+		b.MouseEnter:Connect(function() b.BackgroundTransparency = 0.45 end)
+		b.MouseLeave:Connect(function() b.BackgroundTransparency = 1 end)
+		return b
+	end
+
+	local minBtn = winBtn(-64, th("HOVER"))
+	make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 4), Size = UDim2.fromOffset(10, 2),
+		BackgroundColor3 = th("TEXT"), BorderSizePixel = 0, ZIndex = 46,
+	}, minBtn)
+
+	local maxBtn = winBtn(-36, th("HOVER"))
+	do
+		local sq = make("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(10, 10),
+			BackgroundTransparency = 1, ZIndex = 46,
+		}, maxBtn)
+		make("UIStroke", { Color = th("TEXT"), Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sq)
+	end
+
+	local closeBtn = winBtn(-8, Color3.fromRGB(235, 50, 60))
+	for _, rot in ipairs({ 45, -45 }) do
+		make("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(13, 2),
+			Rotation = rot, BackgroundColor3 = th("TEXT"), BorderSizePixel = 0, ZIndex = 46,
+		}, closeBtn)
+	end
+
+	minBtn.Activated:Connect(function() setOpen(false) end)
+	maxBtn.Activated:Connect(function()
+		zoomMul = (zoomMul == 1) and 1.2 or 1
+		applyScale()
+	end)
+	closeBtn.Activated:Connect(function() UI.destroy() end)
+
+	-- drag window (title bar)
+	local dragFrame = make("Frame", {
+		Size = UDim2.new(1, -130, 0, 28), BackgroundTransparency = 1, Active = true, ZIndex = 40,
+	}, main)
 	local dragging, startMouse, startPos
 	table.insert(conns, dragFrame.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -1376,15 +1990,7 @@ local function attachDrag(dragFrame)
 	end))
 end
 
-attachDrag(make("Frame", {
-	Size = UDim2.new(1, -90, 0, 24), BackgroundTransparency = 1, Active = true, ZIndex = 40,
-}, main))
-attachDrag(make("Frame", {
-	Position = UDim2.fromOffset(8, 24), Size = UDim2.fromOffset(124, 54),
-	BackgroundTransparency = 1, Active = true, ZIndex = 40,
-}, main))
-
--- ---------- Floating icon ----------
+-- ================= FLOATING ICON =================
 local iconBtn = make("TextButton", {
 	Name = "FloatingIcon", Position = UDim2.new(0, 16, 0.5, -26), Size = UDim2.fromOffset(52, 52),
 	BackgroundColor3 = th("BG"), BorderSizePixel = 0, Text = "", AutoButtonColor = false, ZIndex = 60,
@@ -1417,6 +2023,7 @@ do
 	end)
 end
 
+-- icon bisa digeser; tap (tanpa geser) = buka/tutup
 do
 	local dragging, moved, startMouse, startPos
 	table.insert(conns, iconBtn.InputBegan:Connect(function(input)
@@ -1445,7 +2052,7 @@ do
 	end))
 end
 
--- ---------- Animasi utama ----------
+-- ================= ANIMASI UTAMA =================
 do
 	local t0 = os.clock()
 	local acc, kacc = 0, 0
@@ -1493,7 +2100,7 @@ do
 	end))
 end
 
--- ---------- Cleanup ----------
+-- ================= CLEANUP =================
 gui.Destroying:Connect(function()
 	if kaitun then
 		kaitun = false
@@ -1510,9 +2117,11 @@ end)
 applyTheme(currentTheme)
 paintKaitun()
 
--- ====================================================================
--- FITUR BIKE FOR EGG  (semua baru aktif setelah System Key valid)
--- ====================================================================
+-- ====== TARUH KODE PROJECT KAMU DI BAWAH SINI ======
+
+---------------------------------------------------------------------
+-- BIKE FOR EGG  (semua fitur HANYA jalan kalau key sudah valid)
+---------------------------------------------------------------------
 local okBike, errBike = pcall(function()
 	local VirtualUser = game:GetService("VirtualUser")
 
@@ -1537,7 +2146,6 @@ local okBike, errBike = pcall(function()
 		ZONE_RADIUS = 90,   -- radius cari egg di sekitar koordinat zone
 		FIND_TIMEOUT = 4,   -- detik menunggu egg muncul setelah tiba di zone
 
-		-- kata kunci (huruf kecil, cocok sebagian)
 		TAKE_WORDS    = { "steal", "curi", "grab", "take", "pick", "ambil", "collect", "egg" },
 		PLACE_WORDS   = { "place", "put", "drop", "taruh", "deposit", "insert" },
 		CARRY_WORDS   = { "egg", "telur" },
@@ -1553,24 +2161,31 @@ local okBike, errBike = pcall(function()
 		TREADMILL_POS = nil, -- isi Vector3 kalau treadmill tidak terdeteksi
 	}
 
+	local RARITIES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Eternal", "Divine" }
+	local RARITY_ATTRS = { "Rarity", "rarity", "EggRarity", "Tier" }
+
 	-- ================= STATE =================
 	local S = { alive = true, busy = false, noclip = false, floatOn = false }
-	local settings = {
-		autosteal = false, autotreadmill = false, autoupgrade = false, autobuybike = false,
-		autobring = false, autoopenegg = false, autosellall = false,
-		zone = 0, method = 1, forcespeed = 100, tweenspeed = 120,
-	}
-	local binders = {}
-	local function setSetting(k, v)
-		if not Gate.unlocked then
-			toast("Masukkan System Key dulu")
-			return
-		end
-		settings[k] = v
-		if binders[k] then binders[k](v) end
-	end
 	local function setStatus(t) UI.setStatus(t) end
 	local floatPart
+
+	local function featOn(name)
+		if not unlocked then return false end
+		local fe = UI.getFeature("Fitur", name)
+		return fe ~= nil and fe.enabled == true
+	end
+	local function featVal(name)
+		local fe = UI.getFeature("Fitur", name)
+		return fe and fe.value
+	end
+	local function cfgNum(name, dflt)
+		local v = UI.getSetting("Fitur", name)
+		return tonumber(v) or dflt
+	end
+	local function zoneSel()
+		local v = featVal("Auto Steal") or "Auto"
+		return tonumber(tostring(v):match("%d+")) or 0
+	end
 
 	-- ================= UTIL =================
 	local function any(s, words)
@@ -1610,9 +2225,10 @@ local okBike, errBike = pcall(function()
 		if not S.noclip then return end
 		local ch = LocalPlayer.Character
 		if not ch then return end
-		for _, p in ipairs(ch:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end
+		for _, pt in ipairs(ch:GetDescendants()) do if pt:IsA("BasePart") then pt.CanCollide = false end end
 	end))
 	table.insert(conns, LocalPlayer.Idled:Connect(function()
+		if not unlocked then return end
 		pcall(function() VirtualUser:CaptureController() VirtualUser:ClickButton2(Vector2.new()) end)
 	end))
 
@@ -1640,43 +2256,119 @@ local okBike, errBike = pcall(function()
 		if par:IsA("Model") then return par:GetPivot().Position end
 		return nil
 	end
-	local function promptPos(p) return partPos(p.Parent) end
-	local function ptext(p)
-		local par = p.Parent
-		return (p.ActionText .. " " .. p.ObjectText .. " " .. p.Name .. " " .. (par and par.Name or "")):lower()
+	local function promptPos(pr) return partPos(pr.Parent) end
+	local function ptext(pr)
+		local par = pr.Parent
+		return (pr.ActionText .. " " .. pr.ObjectText .. " " .. pr.Name .. " " .. (par and par.Name or "")):lower()
 	end
-	local function fire(p)
+	local function firePrompt(pr)
 		pcall(function()
-			p.HoldDuration = 0
-			p.RequiresLineOfSight = false
-			if p.MaxActivationDistance < 40 then p.MaxActivationDistance = 40 end
+			pr.HoldDuration = 0
+			pr.RequiresLineOfSight = false
+			if pr.MaxActivationDistance < 40 then pr.MaxActivationDistance = 40 end
 		end)
-		if fireproximityprompt then pcall(fireproximityprompt, p)
-		else pcall(function() p:InputHoldBegin() p:InputHoldEnd() end) end
+		if fireproximityprompt then pcall(fireproximityprompt, pr)
+		else pcall(function() pr:InputHoldBegin() pr:InputHoldEnd() end) end
 	end
-	local function isTake(p)
-		local t = ptext(p)
+	local function isTake(pr)
+		local t = ptext(pr)
 		return any(t, CFG.TAKE_WORDS) and not any(t, CFG.PLACE_WORDS)
 	end
-	local function isPlace(p) return any(ptext(p), CFG.PLACE_WORDS) end
-	local function isOther(p) -- prompt apa saja yang bukan place/sell/open (cadangan)
-		local t = ptext(p)
+	local function isPlace(pr) return any(ptext(pr), CFG.PLACE_WORDS) end
+	local function isOther(pr) -- prompt apa saja yang bukan place/sell/open (cadangan)
+		local t = ptext(pr)
 		return not any(t, CFG.PLACE_WORDS) and not any(t, CFG.SELL_WORDS) and not any(t, CFG.OPEN_WORDS)
 	end
 
 	local function nearestPrompt(center, radius, matcher, minFromSafe)
 		local best, bpos, bd = nil, nil, radius
 		local mychar = LocalPlayer.Character
-		for p in pairs(prompts) do
-			if p.Parent and p.Enabled and not (mychar and p:IsDescendantOf(mychar)) and matcher(p) then
-				local pos = promptPos(p)
+		for pr in pairs(prompts) do
+			if pr.Parent and pr.Enabled and not (mychar and pr:IsDescendantOf(mychar)) and matcher(pr) then
+				local pos = promptPos(pr)
 				if pos and (not minFromSafe or (pos - CFG.SAFE).Magnitude > minFromSafe) then
 					local d = (pos - center).Magnitude
-					if d <= bd then best, bpos, bd = p, pos, d end
+					if d <= bd then best, bpos, bd = pr, pos, d end
 				end
 			end
 		end
 		return best, bpos
+	end
+
+	-- ================= DETEKSI RARITY EGG =================
+	local rarityCache = setmetatable({}, { __mode = "k" })
+
+	local function hasWord(s, w)
+		return s:find("%f[%a]" .. w .. "%f[%A]") ~= nil
+	end
+	local function rarityOfText(s)
+		if type(s) ~= "string" or s == "" then return nil end
+		s = s:lower()
+		for _, r in ipairs(RARITIES) do
+			local k = r:lower()
+			if hasWord(s, k) then return r end
+			if k == "eternal" and hasWord(s, "enternal") then return r end
+		end
+		return nil
+	end
+
+	-- cari teks rarity di dalam model egg terdekat (dibatasi supaya tidak salah ambil egg lain)
+	local function scanModel(model)
+		local n = 0
+		for _, d in ipairs(model:GetDescendants()) do
+			n += 1
+			if n > 250 then return nil end
+			if d:IsA("TextLabel") or d:IsA("TextButton") then
+				local r = rarityOfText(d.Text)
+				if r then return r end
+			elseif d:IsA("ValueBase") and d.Name:lower():find("rarity", 1, true) then
+				local r = rarityOfText(tostring(d.Value))
+				if r then return r end
+			end
+		end
+		return nil
+	end
+
+	local function eggRarity(pr)
+		local cached = rarityCache[pr]
+		if cached then return cached end
+		local r
+
+		-- 1) attribute / value / nama pada induk (maks 3 tingkat)
+		local node = pr.Parent
+		for _ = 1, 3 do
+			if not node or node == workspace then break end
+			for _, an in ipairs(RARITY_ATTRS) do
+				local v = node:GetAttribute(an)
+				if v ~= nil then r = rarityOfText(tostring(v)) end
+				if r then break end
+			end
+			if r then break end
+			local rv = node:FindFirstChild("Rarity")
+			if rv and rv:IsA("ValueBase") then r = rarityOfText(tostring(rv.Value)) end
+			if r then break end
+			r = rarityOfText(node.Name)
+			if r then break end
+			node = node.Parent
+		end
+
+		-- 2) teks prompt
+		if not r then r = rarityOfText(pr.ActionText .. " " .. pr.ObjectText) end
+
+		-- 3) label / value di dalam model egg
+		if not r then
+			local m = pr:FindFirstAncestorWhichIsA("Model")
+			if m and m ~= workspace then r = scanModel(m) end
+		end
+
+		if r then rarityCache[pr] = r end
+		return r
+	end
+
+	local function takeMatcher(want)
+		return function(pr)
+			return isTake(pr) and (not want or eggRarity(pr) == want)
+		end
 	end
 
 	-- ================= TOOL / EGG =================
@@ -1702,9 +2394,9 @@ local okBike, errBike = pcall(function()
 			local fb
 			for _, t in ipairs(root:GetChildren()) do
 				if t:IsA("Tool") then
-					local n = t.Name:lower()
-					if any(n, CFG.CARRY_WORDS) then return t end
-					if not any(n, CFG.NOT_CARRY) then fb = fb or t end
+					local nm = t.Name:lower()
+					if any(nm, CFG.CARRY_WORDS) then return t end
+					if not any(nm, CFG.NOT_CARRY) then fb = fb or t end
 				end
 			end
 			return fb
@@ -1751,7 +2443,7 @@ local okBike, errBike = pcall(function()
 			if not h then break end
 			local d = target - h.Position
 			if d.Magnitude <= stop then reached = true break end
-			h.AssemblyLinearVelocity = d.Unit * settings.forcespeed
+			h.AssemblyLinearVelocity = d.Unit * cfgNum("Speed Gerak Paksa", 100)
 			RunService.Heartbeat:Wait()
 		end
 		local h = hrp()
@@ -1768,7 +2460,7 @@ local okBike, errBike = pcall(function()
 		if dist <= stop then return true end
 		S.floatOn, S.noclip = true, true
 		local tw = TweenService:Create(h,
-			TweenInfo.new(dist / math.max(settings.tweenspeed, 1), Enum.EasingStyle.Linear),
+			TweenInfo.new(dist / math.max(cfgNum("Tween Speed", 120), 1), Enum.EasingStyle.Linear),
 			{ CFrame = CFrame.new(target) })
 		tw:Play()
 		local t0 = os.clock()
@@ -1784,7 +2476,7 @@ local okBike, errBike = pcall(function()
 
 	-- metode 1 = TP, 2 = gerak paksa (metode 3 memakai TP langsung / instant)
 	local function moveTo(target, stop, cond)
-		if settings.method == 2 then return forceMove(target, stop, cond) end
+		if cfgNum("Metode Farming", 1) == 2 then return forceMove(target, stop, cond) end
 		return tpMove(target, stop, cond)
 	end
 
@@ -1820,27 +2512,29 @@ local okBike, errBike = pcall(function()
 				setPos(h, pos + Vector3.new(0, 3, 0))
 				task.wait(0.1)
 			end
-			fire(pp)
+			firePrompt(pp)
 			return true
 		end
 		if tool then pcall(function() tool:Activate() end) return true end
 		return false
 	end
 
-	local function waitEggNear(center, timeout, cond)
+	-- want = nama rarity (nil = egg apa saja)
+	local function waitEggNear(center, timeout, cond, want)
 		local t0 = os.clock()
+		local matcher = takeMatcher(want)
 		repeat
-			local p, pos = nearestPrompt(center, CFG.ZONE_RADIUS, isTake, CFG.SAFE_RADIUS)
-			if p then return p, pos end
+			local pr, pos = nearestPrompt(center, CFG.ZONE_RADIUS, matcher, CFG.SAFE_RADIUS)
+			if pr then return pr, pos end
 			task.wait(0.25)
 		until os.clock() - t0 >= timeout or not cond()
-		-- cadangan: prompt apa saja di sekitar zone
+		if want then return nil end -- mode rarity: jangan ambil egg lain
 		return nearestPrompt(center, CFG.ZONE_RADIUS, isOther, CFG.SAFE_RADIUS)
 	end
 
 	-- ================= STEAL: pergi ke zone -> ambil -> safe zone =================
 	-- return true kalau ada egg & berhasil
-	local function zoneSteal(zi, cond)
+	local function zoneSteal(zi, cond, want)
 		local zpos = CFG.ZONES[zi]
 		if not zpos then return false end
 		local camera = workspace.CurrentCamera
@@ -1857,28 +2551,32 @@ local okBike, errBike = pcall(function()
 		local ok, err = pcall(function()
 			local h = hrp()
 			if not h then return end
-			local method = settings.method
+			local mth = cfgNum("Metode Farming", 1)
+			local tag = want and (want .. " ") or ""
 
-			if method == 3 then
+			if mth == 3 then
 				local chm
 				clone, chm = createClone()
 				if chm and camera then camera.CameraSubject = chm end
-				setStatus(string.format("[3] instant ke zone %d", zi))
+				setStatus(string.format("[3] %sZ%d", tag, zi))
 				setPos(h, zpos + Vector3.new(0, 3, 0))
 				task.wait(0.15)
 			else
-				setStatus(string.format("[%d] menuju zone %d", method, zi))
-				if not moveTo(zpos, 4, cond) then setStatus("gagal sampai zone " .. zi) return end
+				setStatus(string.format("[%d] %sZ%d", mth, tag, zi))
+				if not moveTo(zpos, 4, cond) then setStatus("gagal sampai Z" .. zi) return end
 			end
 
-			local p, ppos = waitEggNear(zpos, CFG.FIND_TIMEOUT, cond)
-			if not p then setStatus("tidak ada egg di zone " .. zi) finish() return end
+			local pr, ppos = waitEggNear(zpos, CFG.FIND_TIMEOUT, cond, want)
+			if not pr then
+				setStatus(want and ("tidak ada " .. want .. " di Z" .. zi) or ("tidak ada egg Z" .. zi))
+				return
+			end
 			result = true
 
 			-- dekati egg
 			h = hrp()
 			if h and (ppos - h.Position).Magnitude > 8 then
-				if method == 3 then
+				if mth == 3 then
 					setPos(h, ppos + Vector3.new(0, 3, 0))
 					task.wait(0.1)
 				else
@@ -1886,21 +2584,21 @@ local okBike, errBike = pcall(function()
 				end
 			end
 
-			setStatus("ambil egg zone " .. zi)
+			setStatus("ambil egg Z" .. zi)
 			local before = carryScore()
 			local got = false
 			for _ = 1, 8 do
-				if not (p.Parent and p.Enabled) or not cond() then break end
-				fire(p)
+				if not (pr.Parent and pr.Enabled) or not cond() then break end
+				firePrompt(pr)
 				task.wait(0.06)
 				if carryScore() > before then got = true break end
 			end
-			if not got then got = carryScore() > before or not (p.Parent and p.Enabled) end
+			if not got then got = carryScore() > before or not (pr.Parent and pr.Enabled) end
 			if not got then setStatus("gagal ambil egg") result = false return end
 
 			-- ke safe zone
 			setStatus("bawa ke safe zone")
-			if method == 3 then
+			if mth == 3 then
 				setPos(hrp(), CFG.SAFE + Vector3.new(0, 3, 0))
 				task.wait(0.15)
 			else
@@ -1908,35 +2606,67 @@ local okBike, errBike = pcall(function()
 			end
 			placeEgg()
 			task.wait(0.3)
-			setStatus(string.format("selesai zone %d", zi))
+			setStatus(string.format("selesai Z%d", zi))
 		end)
 		if not ok then warn("[Senar Hub] zoneSteal: " .. tostring(err)) end
 		finish()
 		return result
 	end
 
-	local stealing = false
-	local function runSteal(cond)
-		if not Gate.unlocked then return end
-		if S.busy or stealing then return end
-		S.busy, stealing = true, true
-		local z = settings.zone
-		if z >= 1 and z <= #CFG.ZONES then
-			zoneSteal(z, cond)
-		else
-			-- Auto: coba tiap zone sampai ada egg
-			for i = 1, #CFG.ZONES do
-				if not cond() then break end
-				if zoneSteal(i, cond) then break end
+	-- want = nil -> pakai dropdown zone (Auto Steal); want = rarity -> scan semua zone
+	local function runSteal(cond, want)
+		if S.busy then return end
+		S.busy = true
+		local ok, err = pcall(function()
+			if want then
+				local order = {}
+				for i = 1, #CFG.ZONES do order[i] = i end
+				local filter = want
+				if want == "Random" then
+					filter = nil
+					for i = #order, 2, -1 do
+						local j = math.random(i)
+						order[i], order[j] = order[j], order[i]
+					end
+				end
+				for _, i in ipairs(order) do
+					if not cond() then break end
+					if zoneSteal(i, cond, filter) then break end
+				end
+			else
+				local z = zoneSel()
+				if z >= 1 and z <= #CFG.ZONES then
+					zoneSteal(z, cond)
+				else
+					for i = 1, #CFG.ZONES do
+						if not cond() then break end
+						if zoneSteal(i, cond) then break end
+					end
+				end
 			end
-		end
-		S.busy, stealing = false, false
+		end)
+		if not ok then warn("[Senar Hub] runSteal: " .. tostring(err)) end
+		S.busy = false
 	end
 
+	-- Auto Steal (zona dari dropdown)
 	task.spawn(function()
 		while S.alive do
-			if Gate.unlocked and settings.autosteal and not S.busy and hrp() then
-				runSteal(function() return S.alive and Gate.unlocked and settings.autosteal end)
+			if featOn("Auto Steal") and not featOn("Farming Rarity") and not S.busy and hrp() then
+				runSteal(function() return S.alive and featOn("Auto Steal") and not featOn("Farming Rarity") end)
+				task.wait(1.5)
+			else
+				task.wait(0.4)
+			end
+		end
+	end)
+
+	-- Farming Rarity (pilih rarity dari dropdown; Random = egg apa saja, urutan zone acak)
+	task.spawn(function()
+		while S.alive do
+			if featOn("Farming Rarity") and not S.busy and hrp() then
+				local want = tostring(featVal("Farming Rarity") or "Random")
+				runSteal(function() return S.alive and featOn("Farming Rarity") end, want)
 				task.wait(1.5)
 			else
 				task.wait(0.4)
@@ -1948,20 +2678,20 @@ local okBike, errBike = pcall(function()
 	task.spawn(function()
 		local cd = {}
 		while S.alive do
-			if Gate.unlocked and settings.autobring and not S.busy and hrp() then
+			if featOn("Auto Bring Egg") and not S.busy and hrp() then
 				local h = hrp()
-				local p = nearestPrompt(h.Position, 20, isTake, CFG.SAFE_RADIUS)
-				if p and (cd[p] or 0) < os.clock() then
-					cd[p] = os.clock() + 2
-					fire(p)
+				local pr = nearestPrompt(h.Position, 20, isTake, CFG.SAFE_RADIUS)
+				if pr and (cd[pr] or 0) < os.clock() then
+					cd[pr] = os.clock() + 2
+					firePrompt(pr)
 					task.wait(0.3)
 				end
 				h = hrp()
 				if h and carryScore() > 0 and (h.Position - CFG.SAFE).Magnitude > CFG.SAFE_RADIUS then
 					S.busy = true
-					local cond = function() return S.alive and settings.autobring end
+					local cond = function() return S.alive and featOn("Auto Bring Egg") end
 					setStatus("bring egg ke safe zone")
-					if settings.method == 3 then
+					if cfgNum("Metode Farming", 1) == 3 then
 						setPos(hrp(), CFG.SAFE + Vector3.new(0, 3, 0))
 						task.wait(0.15)
 					else
@@ -2017,19 +2747,19 @@ local okBike, errBike = pcall(function()
 
 	task.spawn(function()
 		while S.alive do
-			if Gate.unlocked and settings.autotreadmill and not S.busy and hrp() then
+			if featOn("Auto Treadmill") and not S.busy and hrp() then
 				local pos = findTreadmill()
 				if pos then
 					local h = hrp()
 					if (h.Position - pos).Magnitude > 7 then
 						setStatus("tween ke treadmill")
 						S.busy = true
-						tweenMove(pos + Vector3.new(0, 3, 0), 4, function() return S.alive and settings.autotreadmill end)
+						tweenMove(pos + Vector3.new(0, 3, 0), 4, function() return S.alive and featOn("Auto Treadmill") end)
 						S.floatOn, S.noclip, S.busy = false, false, false
 					end
 					h = hrp()
-					local p = h and nearestPrompt(h.Position, 25, function(x) return any(ptext(x), CFG.TREADMILL_USE) end)
-					if p then fire(p) end
+					local pr = h and nearestPrompt(h.Position, 25, function(x) return any(ptext(x), CFG.TREADMILL_USE) end)
+					if pr then firePrompt(pr) end
 					setStatus("di treadmill")
 				else
 					setStatus("treadmill tidak ketemu")
@@ -2054,10 +2784,10 @@ local okBike, errBike = pcall(function()
 
 	local function pressKeywords(words, extra)
 		local did = false
-		for p in pairs(prompts) do
-			if p.Parent and p.Enabled then
-				local t = ptext(p)
-				if any(t, words) and (not extra or any(t, extra)) then fire(p) did = true end
+		for pr in pairs(prompts) do
+			if pr.Parent and pr.Enabled then
+				local t = ptext(pr)
+				if any(t, words) and (not extra or any(t, extra)) then firePrompt(pr) did = true end
 			end
 		end
 		for d in pairs(clickers) do
@@ -2081,10 +2811,10 @@ local okBike, errBike = pcall(function()
 		return did
 	end
 
-	local function loopPress(flag, words, extra, fallbackWords, delay)
+	local function loopPress(featName, words, extra, fallbackWords, delay)
 		task.spawn(function()
 			while S.alive do
-				if Gate.unlocked and settings[flag] then
+				if featOn(featName) then
 					local ok, did = pcall(pressKeywords, words, extra)
 					if fallbackWords and not (ok and did) then pcall(pressKeywords, fallbackWords) end
 				end
@@ -2092,336 +2822,36 @@ local okBike, errBike = pcall(function()
 			end
 		end)
 	end
-	loopPress("autoupgrade", CFG.UPGRADE_WORDS, CFG.TREADMILL, CFG.UPGRADE_WORDS, 2)
-	loopPress("autobuybike", CFG.BUYBIKE_WORDS, CFG.BIKE_WORDS, nil, 2)
-	loopPress("autoopenegg", CFG.OPEN_WORDS, CFG.EGG_WORDS, CFG.OPEN_WORDS, 2)
-	loopPress("autosellall", CFG.SELL_WORDS, nil, nil, 3)
+	loopPress("Auto Upgrade Treadmill", CFG.UPGRADE_WORDS, CFG.TREADMILL, CFG.UPGRADE_WORDS, 2)
+	loopPress("Auto Buy Bike", CFG.BUYBIKE_WORDS, CFG.BIKE_WORDS, nil, 2)
+	loopPress("Auto Open Egg", CFG.OPEN_WORDS, CFG.EGG_WORDS, CFG.OPEN_WORDS, 2)
+	loopPress("Auto Sell All", CFG.SELL_WORDS, nil, nil, 3)
 
-	-- ================= CONFIG (simpan/muat) =================
-	local FOLDER = "SenarBike"
-	local hasFS = (writefile and readfile and isfile and makefolder and listfiles and isfolder) and true or false
-	local memCfg, cfgNames, curCfg = {}, {}, "Default"
-	local KEYS = { "autosteal", "autotreadmill", "autoupgrade", "autobuybike", "autobring", "autoopenegg",
-		"autosellall", "zone", "method", "forcespeed", "tweenspeed" }
-
-	local function serialize()
-		local lines = {}
-		for _, k in ipairs(KEYS) do lines[#lines + 1] = "Senarcfg:" .. k .. ":" .. tostring(settings[k]) end
-		return table.concat(lines, "\n")
-	end
-	local function applyText(text)
-		local n = 0
-		for line in tostring(text):gmatch("[^\r\n]+") do
-			local k, v = line:match("^%s*Senarcfg:([%w_]+):(.-)%s*$")
-			k = k and k:lower()
-			if k and settings[k] ~= nil then
-				local val
-				if v == "true" then val = true elseif v == "false" then val = false else val = tonumber(v) end
-				if val ~= nil and type(val) == type(settings[k]) then
-					if k == "method" then val = math.clamp(math.floor(val), 1, 3) end
-					if k == "zone" then val = math.clamp(math.floor(val), 0, #CFG.ZONES) end
-					setSetting(k, val)
-					n += 1
-				end
-			end
-		end
-		return n
-	end
-	local function cfgPath(name) return FOLDER .. "/" .. name .. ".cfg" end
-	local function writeCfg(name, text)
-		if hasFS then
-			if not isfolder(FOLDER) then makefolder(FOLDER) end
-			writefile(cfgPath(name), text)
-		else
-			memCfg[name] = text
-		end
-	end
-	local function readCfg(name)
-		if hasFS then return isfile(cfgPath(name)) and readfile(cfgPath(name)) or nil end
-		return memCfg[name]
-	end
-	local function refreshNames()
-		table.clear(cfgNames)
-		if hasFS then
-			if isfolder(FOLDER) then
-				for _, f in ipairs(listfiles(FOLDER)) do
-					local n = tostring(f):match("([^/\\]+)%.cfg$")
-					if n then cfgNames[#cfgNames + 1] = n end
-				end
-			end
-		else
-			for n in pairs(memCfg) do cfgNames[#cfgNames + 1] = n end
-		end
-		table.sort(cfgNames)
-		if #cfgNames == 0 then cfgNames[1] = "Default" end
-	end
-	if not readCfg("Default") then writeCfg("Default", serialize()) end
-	refreshNames()
-
-	-- ================= KOMPONEN UI (tema Senar) =================
-	local pMain = makeList(pages.Main, UDim2.fromScale(1, 1))
-	local pSet = makeList(pages.Config, UDim2.fromScale(1, 1))
-	local order = 0
-
-	local function row(page, text, h)
-		order += 1
-		local r = make("Frame", {
-			Size = UDim2.new(1, 0, 0, h or 36), BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, LayoutOrder = order,
-		}, page)
-		corner(r, 8)
-		glowStroke(r, 1)
-		if text then
-			make("TextLabel", {
-				Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -112, 1, 0), BackgroundTransparency = 1,
-				Text = text, TextColor3 = th("TEXT"), Font = Enum.Font.GothamBold, TextSize = 11,
-				TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-			}, r)
-		end
-		return r
-	end
-
-	local function addSwitch(page, text, key)
-		local r = row(page, text)
-		local track = make("Frame", {
-			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
-			Size = UDim2.fromOffset(38, 20), BorderSizePixel = 0,
-		}, r)
-		corner(track, 10)
-		local knob = make("Frame", {
-			Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(14, 14), BorderSizePixel = 0,
-		}, track)
-		corner(knob, 7)
-
-		local function paint(v, animate)
-			local pos2 = v and UDim2.fromOffset(21, 3) or UDim2.fromOffset(3, 3)
-			local kc = v and T.ONACC or T.TEXT
-			local tc = v and T.ACCENT or T.OFF
-			if animate then
-				tween(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { Position = pos2, BackgroundColor3 = kc })
-				tween(track, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { BackgroundColor3 = tc })
-			else
-				knob.Position = pos2
-				knob.BackgroundColor3 = kc
-				track.BackgroundColor3 = tc
-			end
-		end
-		binders[key] = function(v)
-			paint(v, true)
-			activeFeatures[text] = v or nil
-			refreshKaitun()
-			local okc, err = pcall(UI.onToggle, text, v)
-			if not okc then warn("[Senar Hub] onToggle: " .. tostring(err)) end
-		end
-		onTheme(function() paint(settings[key], false) end)
-
-		local btn = make("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 5 }, r)
-		fx(btn, r, 0.025)
-		btn.Activated:Connect(function() setSetting(key, not settings[key]) end)
-	end
-
-	local function addInput(page, text, key, lo, hi)
-		local r = row(page, text)
-		local box = make("TextBox", {
-			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(78, 24),
-			BackgroundColor3 = th("BG"), Text = tostring(settings[key]), TextColor3 = th("TEXT"), Font = Enum.Font.GothamBold,
-			TextSize = 11, ClearTextOnFocus = false,
-		}, r)
-		corner(box, 6)
-		glowStroke(box, 1)
-		binders[key] = function(v) box.Text = tostring(v) end
-		box.FocusLost:Connect(function()
-			local n = tonumber(box.Text)
-			if n then setSetting(key, math.clamp(n, lo, hi)) end
-			box.Text = tostring(settings[key])
-		end)
-	end
-
-	local function addButton(page, text, btnText, cb, w)
-		local r = row(page, text)
-		local b = make("TextButton", {
-			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(w or 84, 24),
-			BackgroundColor3 = th("ACCENT_DK"), BorderSizePixel = 0, Text = btnText, TextColor3 = th("TEXT"),
-			Font = Enum.Font.GothamBold, TextSize = 10, AutoButtonColor = false,
-		}, r)
-		corner(b, 6)
-		glowStroke(b, 1, "ACCENT")
-		fx(b, b, 0.06)
-		b.Activated:Connect(function()
-			local ok, err = pcall(cb, b)
-			if not ok then warn("[Senar Hub] " .. tostring(err)) end
-		end)
-		return b
-	end
-
-	local function addTextBox(page, placeholder, h)
-		local r = row(page, nil, h or 36)
-		local multi = (h or 36) > 40
-		local box = make("TextBox", {
-			Position = UDim2.fromOffset(6, 5), Size = UDim2.new(1, -12, 1, -10), BackgroundColor3 = th("BG"), Text = "",
-			PlaceholderText = placeholder, PlaceholderColor3 = th("GRAY"), TextColor3 = th("TEXT"), Font = Enum.Font.Gotham,
-			TextSize = 11, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
-			TextYAlignment = Enum.TextYAlignment.Top, MultiLine = multi, TextWrapped = multi, ClipsDescendants = true,
-		}, r)
-		corner(box, 6)
-		make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingTop = UDim.new(0, 4) }, box)
-		return box
-	end
-
-	-- Dropdown pilih zone
-	local function zoneLabel(v) return v == 0 and "Auto (semua)" or ("Zone " .. v) end
-	local function addZoneDropdown(page)
-		local r = row(page, "Pilih Zone")
-		local btn = make("TextButton", {
-			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(104, 24),
-			BackgroundColor3 = th("ACCENT_DK"), BorderSizePixel = 0, Text = zoneLabel(settings.zone) .. " ▾",
-			TextColor3 = th("TEXT"), Font = Enum.Font.GothamBold, TextSize = 10, AutoButtonColor = false,
-		}, r)
-		corner(btn, 6)
-		glowStroke(btn, 1, "ACCENT")
-		fx(btn, btn, 0.06)
-
-		order += 1
-		local drop = make("Frame", {
-			Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = th("SIDE"),
-			BorderSizePixel = 0, LayoutOrder = order, Visible = false,
-		}, page)
-		corner(drop, 8)
-		glowStroke(drop, 1)
-		make("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, drop)
-		make("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, drop)
-
-		for i = 0, #CFG.ZONES do
-			local o = make("TextButton", {
-				Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = th("PANEL"), BorderSizePixel = 0, LayoutOrder = i,
-				Text = zoneLabel(i), TextColor3 = th("TEXT"), Font = Enum.Font.GothamBold, TextSize = 11, AutoButtonColor = false,
-			}, drop)
-			corner(o, 6)
-			o.Activated:Connect(function()
-				setSetting("zone", i)
-				drop.Visible = false
-			end)
-		end
-		btn.Activated:Connect(function() drop.Visible = not drop.Visible end)
-		binders.zone = function(v) btn.Text = zoneLabel(v) .. " ▾" end
-	end
-
-	-- ================= ISI TAB MAIN =================
-	addZoneDropdown(pMain)
-	addButton(pMain, "Steal zone terpilih sekarang", "Steal", function()
-		if not Gate.unlocked then toast("Masukkan System Key dulu") return end
+	-- ================= AKSI TOMBOL =================
+	actions["Steal Sekarang"] = function()
 		if S.busy then setStatus("masih sibuk") return end
-		task.spawn(function()
-			runSteal(function() return S.alive and Gate.unlocked end)
-		end)
-	end)
-	addSwitch(pMain, "Auto Steal", "autosteal")
-	addSwitch(pMain, "Auto Treadmill (Tween ke treadmill-ku)", "autotreadmill")
-	addSwitch(pMain, "Auto Upgrade Treadmill", "autoupgrade")
-	addSwitch(pMain, "Auto Buy Bike", "autobuybike")
-	addSwitch(pMain, "Auto Bring Egg (grab egg)", "autobring")
-	addSwitch(pMain, "Auto Open Egg", "autoopenegg")
-	addSwitch(pMain, "Auto Sell All", "autosellall")
-
-	-- ================= ISI TAB CONFIG =================
-	local methodBtn
-	methodBtn = addButton(pSet, "Auto Farming Method (1-3)", "", function()
-		setSetting("method", settings.method % 3 + 1)
-	end, 112)
-	binders.method = function(v)
-		methodBtn.Text = ({ "1: TP", "2: Gerak Paksa", "3: Instant Steal" })[v] or tostring(v)
+		runSteal(function() return S.alive and unlocked end)
 	end
-	binders.method(settings.method)
 
-	addInput(pSet, "Set Speed Gerak Paksa", "forcespeed", 10, 500)
-	addInput(pSet, "Set Tween Speed", "tweenspeed", 10, 500)
-
-	order += 1
-	make("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 16), BackgroundTransparency = 1, LayoutOrder = order, Text = "CONFIG",
-		TextColor3 = th("GRAY"), Font = Enum.Font.GothamBold, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left,
-	}, pSet)
-
-	local selBtn
-	selBtn = addButton(pSet, "Config:", curCfg, function()
-		refreshNames()
-		local idx = table.find(cfgNames, curCfg) or 0
-		curCfg = cfgNames[idx % #cfgNames + 1]
-		selBtn.Text = curCfg
-	end, 112)
-
-	local nameBox = addTextBox(pSet, "Name: (nama config baru)")
-	addButton(pSet, "Create Config", "Create", function()
-		local n = nameBox.Text:gsub("[^%w_%-]", "")
-		if n == "" then setStatus("isi Name dulu") return end
-		writeCfg(n, serialize())
-		refreshNames()
-		curCfg = n
-		selBtn.Text = n
-		nameBox.Text = ""
-		setStatus("config dibuat: " .. n)
-	end)
-	addButton(pSet, "Delete Config", "Delete", function()
-		if curCfg == "Default" then setStatus("Default tidak bisa dihapus") return end
-		if hasFS then pcall(delfile, cfgPath(curCfg)) else memCfg[curCfg] = nil end
-		setStatus("config dihapus: " .. curCfg)
-		curCfg = "Default"
-		selBtn.Text = curCfg
-		refreshNames()
-	end)
-	addButton(pSet, "Save Config", "Save", function()
-		writeCfg(curCfg, serialize())
-		setStatus("config disimpan: " .. curCfg)
-	end)
-	addButton(pSet, "Set Config (pakai)", "Set", function()
-		local t = readCfg(curCfg)
-		if not t then setStatus("config tidak ada") return end
-		setStatus(string.format("config %s dimuat (%d nilai)", curCfg, applyText(t)))
-	end)
-	local viewBox = addTextBox(pSet, "isi config tampil di sini", 90)
-	addButton(pSet, "Open Config", "Open", function()
-		local t = readCfg(curCfg) or "(kosong)"
-		viewBox.Text = t
-		if setclipboard then pcall(setclipboard, t) end
-		setStatus("config dibuka + disalin")
-	end)
-	local upBox = addTextBox(pSet, "tempel config (Senarcfg:autosteal:true ...)", 90)
-	addButton(pSet, "Upload Config", "Upload", function()
-		local n = applyText(upBox.Text)
-		if n > 0 then writeCfg(curCfg, serialize()) end
-		setStatus(string.format("upload: %d nilai ke %s", n, curCfg))
-	end)
-	addButton(pSet, "Salin teks prompt (debug)", "Dump", function()
+	-- debug: lihat rarity yang terbaca dari prompt egg di sekitar
+	actions["Dump Egg Rarity"] = function()
 		local h = hrp()
 		local lines = {}
-		for p in pairs(prompts) do
-			if p.Parent and p.Enabled then
-				local pos = promptPos(p)
-				lines[#lines + 1] = string.format("%s | %d stud", ptext(p),
-					(h and pos) and math.floor((pos - h.Position).Magnitude) or -1)
+		for pr in pairs(prompts) do
+			if pr.Parent and pr.Enabled and isTake(pr) then
+				local pos = promptPos(pr)
+				local dist = (h and pos) and math.floor((pos - h.Position).Magnitude) or -1
+				if dist >= 0 and dist <= 400 then
+					lines[#lines + 1] = string.format("%s | rarity=%s | %d stud", ptext(pr), tostring(eggRarity(pr)), dist)
+				end
 			end
-			if #lines >= 50 then break end
+			if #lines >= 40 then break end
 		end
-		local s = #lines > 0 and table.concat(lines, "\n") or "(tidak ada prompt)"
+		local s = #lines > 0 and table.concat(lines, "\n") or "(tidak ada egg dalam 400 stud)"
 		if setclipboard then pcall(setclipboard, s) end
 		print(s)
 		setStatus("dump disalin")
-	end)
-
-	-- saat key valid: pindah ke Main + muat config Default (sekali)
-	local loaded = false
-	onUnlock(function(on, tier)
-		if not on then
-			setStatus("Terkunci: butuh key")
-			return
-		end
-		if not loaded then
-			loaded = true
-			local t = readCfg("Default")
-			if t then applyText(t) end
-			if currentTab == "System Key" then selectTab("Main") end
-		end
-		setStatus("Siap [" .. tostring(tier) .. "] | metode " .. settings.method)
-	end)
+	end
 
 	gui.Destroying:Connect(function()
 		S.alive = false
@@ -2432,5 +2862,3 @@ if not okBike then
 	warn("[Senar Hub] ERROR: " .. tostring(errBike))
 	UI.setStatus("ERR: " .. tostring(errBike):sub(1, 60))
 end
-
--- ====== TARUH KODE PROJECT KAMU DI BAWAH SINI ======
